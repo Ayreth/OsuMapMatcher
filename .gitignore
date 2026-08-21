@@ -1,0 +1,31 @@
+# generated data: dump, corpus, index, scaler, sqlite, release bundles
+data/
+*.tar.bz2
+*.parquet
+*.sqlite
+*.usearch
+*.npy
+*.npz
+
+# the raw ppy dump, wherever it got extracted
+*osu_files*/
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+
+# third-party binaries the user installs themselves
+tosu/
+
+# editor / tooling
+.claude/
+.vscode/
+.idea/
+*.swp
+.DS_Store

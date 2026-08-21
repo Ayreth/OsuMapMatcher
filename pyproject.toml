@@ -1,0 +1,41 @@
+[project]
+name = "osureco"
+version = "0.1.0"
+description = "Moteur de recommandation de beatmaps osu! content-based, 100% local"
+requires-python = ">=3.11"
+
+# Phase 1 uniquement. Les autres deps arrivent au fur et a mesure des phases,
+# pour garder l'install minimale tant qu'on ne s'en sert pas.
+dependencies = [
+    "websockets>=13",   # client du websocket v2 de tosu
+    "rosu-pp-py>=4",    # difficulte + strains, meme moteur que tosu
+    "numpy>=1.26",      # quantiles, geometrie, vecteur de features
+]
+
+[project.optional-dependencies]
+# Phase 3 : corpus
+corpus = [
+    "pandas>=2.2",
+    "pyarrow>=16",
+    "tqdm>=4.66",
+]
+# Phase 4 : scaling + index ANN
+index = [
+    "scikit-learn>=1.5",  # RobustScaler uniquement
+    "usearch>=2.12",
+]
+# Phase 5 : serveur local
+server = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+]
+dev = [
+    "pytest>=8",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
