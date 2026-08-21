@@ -1,7 +1,6 @@
 # osu!MapMatcher
 
-
-![Banner](docs/Map Matcher Banner.png)
+![Banner](docs/MapMatcherBanner.png)
 
 **Find the osu! maps that actually play like the one you have selected.**
 Pick a map in song select, and this tool shows you the most structurally similar
