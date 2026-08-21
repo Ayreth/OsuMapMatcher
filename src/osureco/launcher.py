@@ -10,9 +10,14 @@ the public ppy beatmap dump. Building it from scratch means downloading ~3 GB
 and burning a couple of minutes of CPU, so by default we fetch a prebuilt one
 from the repository's GitHub releases instead. `--build` does it locally.
 
-The download URL is not hardcoded to any account: it is derived from this
-clone's git remote, so a fork serves its own index without editing any code.
-Set OSURECO_INDEX_URL to override it (a self-hosted mirror, for instance).
+Where the index comes from, in order of precedence:
+
+  1. OSURECO_INDEX_URL, if set (a self-hosted mirror, for instance)
+  2. this clone's git remote, so a fork serves its own index with no code change
+  3. the upstream repository below
+
+Step 3 exists because most people click "Download ZIP" rather than cloning, and
+a ZIP has no .git folder to read a remote from.
 """
 
 from __future__ import annotations
@@ -31,6 +36,8 @@ from pathlib import Path
 from .paths import PROJECT_ROOT, data_dir, describe_dump, find_dump, index_root
 
 ASSET_NAME = "osureco-index-nomod.zip"
+#: last-resort source, used when there is no git remote to read (ZIP downloads)
+UPSTREAM_SLUG = "Ayreth/OsuMapMatcher"
 #: files that must all be present for a variant folder to count as usable
 REQUIRED = ("scaler.npz", "vectors.npy", "vectors_raw.npy", "index.usearch", "corpus.sqlite")
 
@@ -54,8 +61,8 @@ def index_url() -> str:
     override = os.environ.get("OSURECO_INDEX_URL")
     if override:
         return override
-    slug = remote_slug()
-    return f"https://github.com/{slug}/releases/latest/download/{ASSET_NAME}" if slug else ""
+    slug = remote_slug() or UPSTREAM_SLUG
+    return f"https://github.com/{slug}/releases/latest/download/{ASSET_NAME}"
 
 
 def has_index(variant: str = "nomod") -> bool:

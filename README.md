@@ -84,10 +84,11 @@ The first run creates a virtual environment, installs the dependencies and
 downloads the prebuilt index (~150 MB). That takes a few minutes. Every run
 after that starts in a couple of seconds.
 
-> If you cloned with `git`, the launcher works out where to download the index
-> from by reading your git remote — forks serve their own index automatically.
-> If you downloaded the ZIP instead, there is no git remote, so set the URL
-> yourself: `set OSURECO_INDEX_URL=https://github.com/<owner>/<repo>/releases/latest/download/osureco-index-nomod.zip`
+> The index comes from this repository's
+> [latest release](https://github.com/Ayreth/OsuMapMatcher/releases/latest).
+> If you cloned a fork, the launcher reads your own git remote instead, so your
+> fork serves your own index with no code change. `OSURECO_INDEX_URL` overrides
+> both if you want to host it somewhere else.
 
 ## Running it by hand
 
