@@ -165,8 +165,11 @@ filter leaves too many candidates. Typical query: 15–100 ms.
 - **Ranked and loved only.** The ppy dump does not include graveyard or WIP
   maps, so those will never be recommended.
 - **EZ, FL and HT+HR have no dedicated corpus** and fall back to the closest one
-  available. FL is the least accurate fallback, since it changes one of the
-  strain series the tool uses.
+  available. Mods that change difficulty numbers without moving objects or the
+  clock — HD, FL, NF and friends — are deliberately ignored on *both* sides of
+  the comparison, so query and corpus stay consistent; their effect simply is
+  not modelled. (Measured: HD shifts the flashlight strain series by ~30%, FL
+  does not touch it at all.)
 - **Slider shapes are ignored.** Only object start positions are read — no curve
   types, no repeats, no slider velocity. A map with wild slider art and a plain
   one can look similar here.
