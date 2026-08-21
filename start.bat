@@ -1,5 +1,5 @@
 @echo off
-setlocal EnableDelayedExpansion
+setlocal
 cd /d "%~dp0"
 title osu!MapMatcher
 
@@ -7,6 +7,10 @@ echo ================================================
 echo   osu!MapMatcher
 echo ================================================
 echo.
+
+REM Delayed expansion eats "!" in echoed text, so it is only switched on here,
+REM below the banner, where !errorlevel! is actually needed.
+setlocal EnableDelayedExpansion
 
 REM ---- find a usable Python -------------------------------------------------
 set "PY="
