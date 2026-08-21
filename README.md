@@ -5,6 +5,8 @@ Pick a map in song select, and this tool shows you the most structurally similar
 maps out of 151,558 ranked and loved beatmaps — updating live, on your second
 screen, with no account and no internet connection needed once installed.
 
+![The recommendation list, updating live as you browse song select](docs/ui-overview.png)
+
 ---
 
 ## Built with AI — read this first
@@ -59,6 +61,11 @@ You can also:
   Same difficulty, opposite challenge. Useful for practice.
 - **Pivot**: make any recommendation the new search source without touching the
   game.
+
+![Weight sliders and filters, expanded](docs/ui-controls.png)
+
+Both panels stay collapsed until you need them, and show what you have changed
+away from the defaults right in their header.
 
 Mods are handled: turn on DT, HR, DTHR or HT in osu! and the tool switches to a
 corpus computed with those mods, so a 7★ map played at 1.5× is compared against
