@@ -23,6 +23,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
 
+from .api import ApiConfig, SearchService, build_router
 from .features import GROUP_NAMES
 from .index import DEFAULT_STAR_RANGE, QueryTarget, Searcher, SearcherSet
 from .paths import index_root
@@ -92,6 +93,13 @@ def create_app(index_dir: Path | None = None) -> FastAPI:
                 state.searchers.close()
 
     app = FastAPI(title="osureco", lifespan=lifespan)
+
+    # Le serveur local monte le MEME routeur que l'API hebergee (api.py), sans
+    # quota ni jeton : un seul protocole a maintenir, et la page peut taper
+    # /api/v1 ici ou a distance sans savoir lequel des deux elle a en face.
+    app.include_router(
+        build_router(SearchService(lambda: state.searchers, ApiConfig.local()))
+    )
 
     # -- page ------------------------------------------------------------------
 

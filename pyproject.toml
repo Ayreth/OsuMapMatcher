@@ -29,9 +29,23 @@ server = [
     "fastapi>=0.115",
     "uvicorn>=0.30",
 ]
+# Phase 6 : API hebergee. Volontairement suffisante a elle seule, et sans
+# scikit-learn : ajuster le scaler demande sklearn, le relire non (il est
+# persiste en tableaux). Un serveur qui sert un index prebati n'a donc pas a
+# installer scipy pour rien.
+api = [
+    "usearch>=2.12",      # lecture de l'index ANN
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+]
 dev = [
     "pytest>=8",
+    "httpx>=0.27",   # TestClient de starlette
 ]
+
+[project.scripts]
+osureco = "osureco.launcher:main"
+osureco-api = "osureco.api:main"
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -39,3 +53,8 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+# la page du serveur local n'est pas du code : sans ca, une install non
+# editable (un conteneur, un wheel) livre osureco sans son interface
+[tool.setuptools.package-data]
+osureco = ["static/*"]

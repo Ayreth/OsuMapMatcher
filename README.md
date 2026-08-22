@@ -129,6 +129,31 @@ About 2 minutes per mod variant on 24 cores, ~1.5 GB on disk for all five.
 It is interruptible: run the same command again and it picks up where it left
 off. `--variants nomod,DT` limits which ones get built.
 
+## Running it as a service (optional)
+
+The engine can also run as a plain HTTP API, so a client does not have to
+install Python or download the index. That is what makes a browser-only client
+possible — a [tosu counter](https://github.com/tosuapp/counters) is a static
+page and cannot host a backend.
+
+```bash
+pip install -e ".[api]"
+python -m osureco.api --host 0.0.0.0 --port 8080 --fetch
+```
+
+A client can ask in three ways: by checksum (the map is already in the corpus,
+zero CPU), by sending a feature dict it computed itself, or by posting the raw
+`.osu` and letting the server featurise it. The last one costs nothing either
+when the map is known, since a map's checksum *is* the MD5 of its `.osu`.
+
+- HTTP contract, with client recipes: [`docs/API.md`](docs/API.md)
+- Deploying it (Docker, systemd, TLS, sizing): [`deploy/README.md`](deploy/README.md)
+
+**The API is never required.** The desktop tool runs entirely offline against
+its own index, and that stays the default and the fallback — a tool that stops
+working because someone else's server went down is exactly what this project
+set out not to be.
+
 ## How the similarity works
 
 Every map is reduced to 96 numbers in five groups:
@@ -153,10 +178,13 @@ thousands silently drowns out a column measured in units, and the distance
 collapses onto two or three dimensions. Star rating is deliberately *not* part
 of the vector — it is a filter, not a dimension of similarity.
 
-Search is a SQL pre-filter (star band, length ratio, exclude the same
-beatmapset) followed by exact weighted scoring over the survivors, with a
+Search is a pre-filter (star band, length ratio, exclude the same beatmapset)
+followed by exact weighted scoring over the survivors, with a
 [usearch](https://github.com/unum-cloud/usearch) HNSW index taking over when the
-filter leaves too many candidates. Typical query: 15–100 ms.
+filter leaves too many candidates. The filter runs over in-memory columns rather
+than in SQL: the same conditions in SQLite cost 250 ms on a dense star band,
+because finding the rows by star rating is fast but testing the other columns
+means reading 30,000 rows one at a time. Typical query now: ~10 ms.
 
 ## Limitations
 

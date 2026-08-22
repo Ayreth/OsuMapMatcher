@@ -119,6 +119,15 @@ FEATURE_SPEC: tuple[tuple[str, str], ...] = (
 
 FEATURE_NAMES: tuple[str, ...] = tuple(name for name, _ in FEATURE_SPEC)
 FEATURE_GROUPS: dict[str, str] = {name: group for name, group in FEATURE_SPEC}
+
+#: empreinte du jeu de features, a echanger entre un client et une API distante.
+#: Un vecteur calcule avec un autre FEATURE_NAMES donne des resultats plausibles
+#: et faux -- c'est exactement le genre de panne qui ne se voit pas. Elle change
+#: des qu'une colonne est ajoutee, retiree ou deplacee, c'est-a-dire au moment
+#: ou tous les index sur disque deviennent caducs de toute facon.
+FEATURE_VERSION: str = hashlib.sha256(
+    "|".join(FEATURE_NAMES).encode("utf-8")
+).hexdigest()[:12]
 GROUP_NAMES: tuple[str, ...] = ("aim", "speed", "rhythm", "spacing", "parameters")
 
 assert len(FEATURE_NAMES) == len(set(FEATURE_NAMES)), "noms de features dupliques"

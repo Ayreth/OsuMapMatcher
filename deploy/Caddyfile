@@ -1,0 +1,22 @@
+# TLS, HTTP/2 and certificates with no further configuration.
+#
+#   sudo caddy run --config deploy/Caddyfile
+# or copy the block into /etc/caddy/Caddyfile and `systemctl reload caddy`.
+
+api.exemple.com {
+	encode zstd gzip
+
+	# un .osu depasse rarement 500 Ko ; l'API refuse au-dela de 4 Mo de toute
+	# facon, autant ne pas laisser le proxy transporter le reste
+	request_body {
+		max_size 4MB
+	}
+
+	# Caddy pose X-Forwarded-For tout seul : cote API, mettre
+	# OSURECO_API_TRUST_PROXY=1, sinon le quota compte le proxy comme un
+	# unique client et tout le monde partage le meme seau.
+	reverse_proxy 127.0.0.1:8080 {
+		health_uri /health
+		health_interval 30s
+	}
+}

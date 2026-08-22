@@ -1,0 +1,482 @@
+# osu!MapMatcher HTTP API
+
+The same recommendation engine the desktop tool runs locally, exposed over
+HTTP so a client does not need Python, `rosu-pp`, or a 164 MB index download.
+
+**The API is an option, never a requirement.** The tool works with no server at
+all, and a client that can run locally should keep doing so — that is the
+failure mode the original OsuMapMatcher died of. Treat a hosted instance as a
+convenience for people who cannot install anything, and always keep a local
+fallback path.
+
+To deploy your own instance, see [`deploy/README.md`](../deploy/README.md).
+
+---
+
+## Contents
+
+- [The three ways to ask](#the-three-ways-to-ask)
+- [Compatibility contract](#compatibility-contract)
+- [Endpoints](#endpoints)
+- [Search options](#search-options)
+- [Response shape](#response-shape)
+- [Errors](#errors)
+- [Client recipes](#client-recipes)
+
+---
+
+## The three ways to ask
+
+Something has to turn the `.osu` file on the player's disk into 96 numbers.
+Where that happens is the only real design choice, and the API supports all
+three answers so a client can pick by what it is able to install.
+
+| | What the client sends | Server CPU | Client needs |
+|---|---|---|---|
+| **1. Checksum** | 32 hex chars | none | nothing |
+| **2. Features** | a dict of 96 named values | none | Python + `rosu-pp-py` + `numpy` |
+| **3. File** | the raw `.osu`, ~40 KB | ~20 ms | nothing |
+
+**Path 1 covers the overwhelming majority of real traffic.** Every ranked and
+loved map is already in the corpus, its vector is already computed, and its
+identity is its MD5 — which tosu hands you for free. Only unsubmitted, edited
+or very new maps miss.
+
+**Path 3 subsumes path 1 automatically.** `POST /similar/file` hashes the bytes
+first and looks that hash up in the corpus; if the map is known, nothing is
+featurised. So a client with no dependencies at all can just always post the
+file and still cost the server nothing on known maps. This is the path that
+makes a pure HTML/JS **tosu counter** possible — those are static pages served
+by tosu itself and cannot host a Python backend.
+
+**Path 2 is for a client that already has the Python stack** — the desktop tool
+itself, when it wants to use a remote index instead of downloading one. It
+sends the dict `featurize()` returned, keyed by name, so no column can ever
+shift silently.
+
+---
+
+## Compatibility contract
+
+A feature vector computed against one feature set and searched against an index
+built from another produces results that look completely plausible and are
+wrong. Nothing crashes, nothing logs, the numbers are simply meaningless.
+
+So every response carries `feature_version`, a short hash of the ordered list of
+the 96 feature names:
+
+```json
+{ "feature_version": "8e824c8319c6" }
+```
+
+- Read it once at startup from `GET /api/v1/meta`.
+- Send it back on any request that carries features or a vector.
+- A mismatch is answered with **409**, never with results.
+- With a raw `vector` (positional), `feature_version` is **required** — there is
+  no other way to know the columns line up.
+- With a `features` dict (keyed by name), it is optional but recommended: a
+  missing key already fails loudly with **400**, but a *renamed* one would not.
+
+The version changes whenever a feature is added, removed or reordered — which
+is also the moment every index on disk becomes invalid, so client and server
+have to move together.
+
+---
+
+## Endpoints
+
+Base path: `/api/v1`. Everything returns JSON. Authentication is optional and
+off by default; when a server sets a token, send
+`Authorization: Bearer <token>` (or `X-API-Key: <token>`) on every call except
+`/health` and `/api/v1/meta` — those stay open so a client can check
+compatibility before it knows whether it is allowed in.
+
+### `GET /health`
+
+Liveness. Answers even with no index installed, which is the point: an instance
+without an index should be visible and drained from a load balancer, not
+restarted in a loop.
+
+```json
+{
+  "ok": true,
+  "ready": true,
+  "variants": ["nomod", "DT", "HR", "DTHR", "HT"],
+  "feature_version": "8e824c8319c6",
+  "uptime_s": 1820.4
+}
+```
+
+`ready: false` means no index is loaded: search endpoints answer **503**.
+
+### `GET /api/v1/meta`
+
+What a client reads at startup.
+
+```bash
+curl -s https://api.example.com/api/v1/meta
+```
+
+```json
+{
+  "feature_version": "8e824c8319c6",
+  "n_features": 96,
+  "feature_names": ["cs", "hp", "od", "ar", "..."],
+  "groups": ["aim", "speed", "rhythm", "spacing", "parameters"],
+  "variants": ["nomod", "DT"],
+  "n_maps": { "nomod": 151558, "DT": 151329 },
+  "limits": {
+    "k_max": 100,
+    "max_upload_bytes": 4000000,
+    "rate_per_minute": 120,
+    "file_cost": 5,
+    "auth_required": false
+  }
+}
+```
+
+`feature_names` is the column order for the compact `vector` form.
+
+### `GET /api/v1/map/{checksum}`
+
+Is this map in the corpus? Lets a client decide whether it has to upload
+anything. **404** if unknown.
+
+```json
+{
+  "variant": "nomod",
+  "warnings": [],
+  "checksum": "9af49bce8882fa219a24aa815a03e698",
+  "beatmap_id": 1000459,
+  "label": "Neptune - Hollywood [Fort's Style]",
+  "stars": 5.91,
+  "bpm": 140.0,
+  "length_s": 114.9,
+  "in_corpus": true,
+  "mods": ""
+}
+```
+
+### `GET /api/v1/similar`
+
+Neighbours of a map that is already in the corpus. Costs the server no CPU
+beyond the search itself.
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `checksum` | — | MD5 of the `.osu`, as reported by tosu |
+| `beatmap_id` | — | alternative to `checksum` |
+| `mods` | `""` | active mods, e.g. `HDDT`; picks the corpus variant |
+| `rate` | `1.0` | lazer clock rate |
+| `variant` | — | force a corpus variant, bypassing `mods` |
+
+Plus every [search option](#search-options).
+
+```bash
+curl -s "https://api.example.com/api/v1/similar\
+?checksum=9af49bce8882fa219a24aa815a03e698&k=10&mods=DT"
+```
+
+**404** if the checksum is not in the corpus — post the file instead.
+
+### `POST /api/v1/similar`
+
+Same thing, with the target supplied by the client. Body is JSON; search
+options live at the top level.
+
+```jsonc
+{
+  // pick exactly one way of naming the target
+  "checksum": "9af49…",              // a corpus map
+  "beatmap_id": 1000459,             // a corpus map
+  "features": { "cs": 4.0, "…": 0 }, // the dict featurize() returned
+  "vector": [4.0, 5.0, "…"],         // the same, positional
+
+  "meta": { "stars": 5.91 },         // extra fields merged into `features`
+  "feature_version": "8e824c8319c6",
+  "featurized_with": "DT",           // mods the client used, for a sanity check
+  "mods": "HDDT",
+  "rate": 1.0,
+  "variant": null,
+
+  "k": 20,
+  "star_range": 0.5,
+  "weights": { "aim": 1.0, "speed": 1.5 }
+}
+```
+
+`stars` is **required** on the features and vector paths. It is not a feature —
+it is the difficulty filter, and without it the search has nothing to narrow
+down (see the `META_NAMES` note in `features.py`). Send it inside `features` or
+inside `meta`.
+
+`featurized_with` is optional and purely diagnostic: if the mods the client
+featurised with are not the ones the corpus was built with, the response says so
+in `warnings` instead of quietly returning biased distances.
+
+### `POST /api/v1/similar/file`
+
+The zero-dependency path. Body is the raw `.osu` bytes — **not** a multipart
+form (a multipart request is answered with **415** and a hint).
+
+```bash
+curl -s -X POST \
+  -H "Content-Type: application/octet-stream" \
+  --data-binary @"Neptune - Hollywood.osu" \
+  "https://api.example.com/api/v1/similar/file?k=10&mods=DT"
+```
+
+Query parameters: `mods`, `rate`, `variant`, and every
+[search option](#search-options).
+
+The server hashes the bytes and looks the hash up in the corpus before doing
+any work, so a known map costs nothing to featurise. `source` in the response
+tells you which happened: `"corpus"` or `"file"`.
+
+The file is used and discarded. Nothing is written to disk; the only thing kept
+is a small in-memory cache of recent featurisations, keyed by content hash.
+
+### `POST /api/v1/featurize`
+
+Featurise without searching. Body is the raw `.osu`, same as above. Useful for a
+client that wants to compute once and then reuse the dict across many searches
+with different weights.
+
+```json
+{
+  "feature_version": "8e824c8319c6",
+  "variant": "DT",
+  "featurized_with": "DT",
+  "features": { "cs": 4.0, "hp": 5.0, "…": 0 },
+  "warnings": []
+}
+```
+
+Feed `features` straight back into `POST /api/v1/similar`.
+
+### `GET /api/v1/stats`
+
+Counters since startup: requests, searches, featurisations, cache hits,
+throttled and unauthorised requests, cache size, CPU concurrency. Handy for
+checking that the corpus-hash shortcut is doing its job — `featurized` should
+stay far below `searches`.
+
+---
+
+## Search options
+
+Identical to the desktop UI's controls, with identical bounds. Available as
+query parameters on the GET and file endpoints, and as top-level JSON fields on
+`POST /api/v1/similar`.
+
+| Option | Type | Default | Range | Meaning |
+|---|---|---|---|---|
+| `k` | int | 20 | 1–100 | how many results |
+| `star_range` | float | 0.5 | 0–10 | half-width of the star band |
+| `length_min` | float | 0.5 | 0.05–1 | shortest result, as a ratio of the query |
+| `length_max` | float | 2.0 | 1–20 | longest result, same |
+| `exclude_same_set` | bool | true | | drop other difficulties of the same mapset |
+| `max_per_song` | int | 1 | 0–10 | cap per song title; 0 disables |
+| `diverge` | string | — | one group | stay close on everything *except* this group |
+| `weights` | object | all 1.0 | 0–2 each | per-group weighting |
+
+Weights are named on the JSON path (`"weights": {"aim": 1.5}`) and prefixed on
+the query-string path (`w_aim=1.5`). Groups: `aim`, `speed`, `rhythm`,
+`spacing`, `parameters`.
+
+`diverge` is the "same difficulty, opposite challenge" mode: results stay near
+the query on every group but the named one, and are then ranked by how *far*
+they are on it.
+
+---
+
+## Response shape
+
+Every search endpoint answers with the same object.
+
+```jsonc
+{
+  "query": {
+    "checksum": "9af49…", "beatmap_id": 1000459,
+    "label": "Neptune - Hollywood [Fort's Style]",
+    "stars": 5.91, "bpm": 140.0, "length_s": 114.9,
+    "in_corpus": true, "mods": "DT"
+  },
+  "variant": "DT",          // corpus actually searched
+  "diverge": null,
+  "count": 10,
+  "matches": [ /* … */ ],
+  "source": "corpus",       // corpus | features | vector | file
+  "feature_version": "8e824c8319c6",
+  "corpus": { "variant": "DT", "n_maps": 151329 },
+  "warnings": []            // approximations the server had to make
+}
+```
+
+Each match:
+
+```jsonc
+{
+  "rank": 1,
+  "checksum": "58e10…", "beatmap_id": 5731234, "beatmapset_id": 2552165,
+  "artist": "YUC'e", "title": "Summer Night Hiking",
+  "creator": "Omekyu", "version": "Kujinn's Expert",
+  "stars": 5.55, "bpm": 170.0, "length_s": 199.3,
+  "distance": 2.0916,       // weighted euclidean distance, unbounded
+  "similarity": 0.7057,     // exp(-distance / 6), monotone, for display
+  "group_distance": { "aim": 1.19, "speed": 0.61, "…": 0 },
+  "group_share":    { "aim": 0.33, "speed": 0.09, "…": 0 },
+  "differences": ["steadier aim (x4.5 -> x3.5)", "longer (1:54 -> 3:22)"],
+  "similarities": ["same AR", "same BPM"],
+  "url_web": "https://osu.ppy.sh/b/5731234",
+  "url_direct": "osu://b/5731234",
+  "url_cover": "https://assets.ppy.sh/beatmaps/2552165/covers/list@2x.jpg"
+}
+```
+
+`similarity` is only a readable rescaling of `distance`; it is strictly
+decreasing, so it never changes an ordering.
+
+### `warnings`
+
+Never ignore this array. It is how the server says it answered a slightly
+different question from the one asked:
+
+- `variant 'DTHR' is not served here, falling back to 'nomod'` — the instance
+  does not host that corpus. Distances are still consistent, but the mods are
+  not modelled.
+- `custom clock rate 1.2x is not modelled; answered against the 'DT' corpus` —
+  lazer free rates have no corpus. `DT` is 1.5× and nothing else.
+- `features were computed with mods 'HDDT' but the corpus was built with 'DT'` —
+  the client featurised with the wrong mods; distances are biased.
+
+Show them, or at least log them.
+
+---
+
+## Errors
+
+FastAPI's usual `{"detail": "..."}`.
+
+| Code | Meaning | What to do |
+|---|---|---|
+| 400 | malformed target: vector of the wrong length, missing feature, missing `stars`, unknown diverge group | fix the request; the message names the problem |
+| 401 | token missing or wrong | send `Authorization: Bearer …` |
+| 404 | checksum unknown in this corpus | post the `.osu` to `/similar/file` |
+| 409 | `feature_version` mismatch | update the client, or point it at a matching server |
+| 413 | file larger than the server's limit | check `limits.max_upload_bytes` |
+| 415 | multipart upload | resend as a raw body |
+| 422 | the `.osu` cannot be used | see the reason: `not_std`, `too_few_objects`, `too_short`, `bad_header` |
+| 429 | rate limited | honour `Retry-After`; consider running locally |
+| 503 | no index loaded | server problem, retry later, fall back to local |
+
+---
+
+## Client recipes
+
+### A tosu counter, in the browser, with no dependencies
+
+```js
+const API = "https://api.example.com/api/v1";
+
+// tosu serves the current .osu at this URL, on the player's own machine
+const FILE = "http://127.0.0.1:24050/files/beatmap/file";
+
+let lastKey = "";
+
+const socket = new WebSocket("ws://127.0.0.1:24050/websocket/v2");
+socket.onmessage = async (event) => {
+  const data = JSON.parse(event.data);
+  const checksum = data?.beatmap?.checksum;
+  const mods = data?.play?.mods?.name ?? "";
+  if (!checksum) return;
+
+  // the mods are part of the identity: turning DT on must re-query
+  const key = `${checksum}|${mods}`;
+  if (key === lastKey) return;
+  lastKey = key;
+
+  // 1. cheap path: the map is almost certainly in the corpus
+  let response = await fetch(
+    `${API}/similar?checksum=${checksum}&mods=${mods}&k=10`);
+
+  // 2. only unsubmitted or edited maps get here
+  if (response.status === 404) {
+    const osu = await (await fetch(FILE)).arrayBuffer();
+    response = await fetch(`${API}/similar/file?mods=${mods}&k=10`, {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: osu,
+    });
+  }
+
+  if (!response.ok) return;                 // 429, 503: keep the last list
+  const payload = await response.json();
+  payload.warnings.forEach((w) => console.warn("osureco:", w));
+  render(payload.matches);
+};
+```
+
+Debounce this. Scrolling through song select fires one message per frame; the
+desktop tool waits 300 ms on a stable checksum before doing anything, and a
+remote client should be at least as polite.
+
+### A Python client that featurises locally
+
+Sends 3 KB of JSON instead of a 40 KB file, and keeps the beatmap on the
+player's machine.
+
+```python
+import httpx
+from osureco.features import FEATURE_VERSION, featurize, variant_for_mods
+
+API = "https://api.example.com/api/v1"
+
+def similar(osu_bytes: bytes, mods: str = "", **options) -> dict:
+    # featurise with the CANONICAL mods of the variant, not the raw ones:
+    # the DT corpus was built with "DT", so a vector computed with "HDDT"
+    # would be compared against it with a silent bias
+    variant = variant_for_mods(mods)
+    features = featurize(osu_bytes, None if variant == "nomod" else variant)
+    if features is None:
+        raise ValueError("this map cannot be featurised")
+
+    response = httpx.post(f"{API}/similar", json={
+        "features": features,
+        "feature_version": FEATURE_VERSION,
+        "featurized_with": "" if variant == "nomod" else variant,
+        "variant": variant,
+        "mods": mods,
+        **options,
+    }, headers={"User-Agent": "osureco/0.1"}, timeout=15.0)
+    response.raise_for_status()
+    return response.json()
+```
+
+Check compatibility once at startup rather than discovering it on a 409:
+
+```python
+meta = httpx.get(f"{API}/meta").json()
+if meta["feature_version"] != FEATURE_VERSION:
+    use_local_index_instead()
+```
+
+### If the instance sits behind Cloudflare
+
+Cloudflare's bot protection answers **403** to a few well-known default user
+agents. Measured on a live instance: `Python-urllib/3.12` is refused on every
+request, while `curl`, a browser, and an explicit `User-Agent: osureco/0.1` all
+pass. Whatever you write, **send a User-Agent**.
+
+That 403 comes from the edge, not from the API, so it has no `detail` field and
+no `feature_version`. Read it as "this client identifies badly", not as an API
+error — and do not treat it as a reason to fall back to local, since retrying
+with a proper header works.
+
+### Falling back to local
+
+The rule that matters: **a remote failure must never be a dead end.** Treat
+429, 503, a timeout, and a `feature_version` mismatch the same way — switch to
+the local index for the rest of the session and say so in the interface. A tool
+that stops working because someone else's server went down is the exact failure
+this project was written to avoid.

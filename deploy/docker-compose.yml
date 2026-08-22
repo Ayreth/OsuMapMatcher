@@ -1,0 +1,89 @@
+# docker compose -f deploy/docker-compose.yml up -d --build
+#
+# Run from the repository root. Every setting comes from the environment, so
+# one file covers a laptop and a server: copy .env.example to deploy/.env and
+# edit that, never this file.
+#
+# The API listens on localhost only. Put something in front of it — a reverse
+# proxy for TLS, or a Cloudflare Tunnel, which needs no open port at all.
+
+x-common: &common
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile
+    target: runtime
+  image: osureco-api:latest
+  # uid:gid used inside the container. With a bind mount, this has to be the
+  # owner of the host folder, otherwise the setup jobs cannot write the index.
+  user: "${OSURECO_UID:-10001}:${OSURECO_GID:-10001}"
+  volumes:
+    # a path (bind mount) or the named volume below — both work here
+    - ${OSURECO_HOST_DATA:-osureco-index}:/data
+
+services:
+  api:
+    <<: *common
+    container_name: ${OSURECO_CONTAINER:-osureco-api}
+    restart: unless-stopped
+    ports:
+      - "${OSURECO_BIND:-127.0.0.1:8080}:8080"
+    environment:
+      # variantes servies ; chacune pese ~290 Mo
+      OSURECO_API_VARIANTS: "${OSURECO_API_VARIANTS:-nomod}"
+      # une API publique en lecture seule : "*" convient. Restreindre a son
+      # propre domaine si elle ne doit servir qu'un site.
+      OSURECO_API_CORS: "${OSURECO_API_CORS:-*}"
+      OSURECO_API_RATE: "${OSURECO_API_RATE:-120}"
+      OSURECO_API_BURST: "${OSURECO_API_BURST:-60}"
+      OSURECO_API_FILE_COST: "${OSURECO_API_FILE_COST:-5}"
+      OSURECO_API_MAX_UPLOAD: "${OSURECO_API_MAX_UPLOAD:-4000000}"
+      # indispensable derriere un proxy ou un tunnel : sinon tous les clients
+      # partagent le seau a jetons d'une seule IP
+      OSURECO_API_TRUST_PROXY: "${OSURECO_API_TRUST_PROXY:-1}"
+      OSURECO_API_TOKEN: "${OSURECO_API_TOKEN:-}"
+      OSURECO_API_DOCS: "${OSURECO_API_DOCS:-1}"
+    command:
+      - python
+      - -m
+      - osureco.api
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8080"
+      - --workers
+      - "${OSURECO_WORKERS:-1}"
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
+  # --- outils ponctuels, jamais demarres par `up` ----------------------------
+
+  # docker compose --profile setup run --rm fetch
+  fetch:
+    <<: *common
+    profiles: ["setup"]
+    environment:
+      OSURECO_API_VARIANTS: "${OSURECO_API_VARIANTS:-nomod}"
+      OSURECO_INDEX_URL: "${OSURECO_INDEX_URL:-}"
+    entrypoint:
+      - python
+      - -c
+      - |
+        import os, sys
+        from osureco.launcher import ensure_index
+        wanted = os.environ.get("OSURECO_API_VARIANTS", "nomod").split(",")
+        sys.exit(0 if ensure_index([v.strip() for v in wanted if v.strip()]) else 1)
+
+  # docker compose --profile setup run --rm builder \
+  #   python scripts/build_index.py --corpus /data/corpus/DT --out /data/index/DT
+  builder:
+    <<: *common
+    profiles: ["setup"]
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: builder
+    image: osureco-builder:latest
+
+volumes:
+  osureco-index:

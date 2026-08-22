@@ -4,7 +4,7 @@ State of the project, the things worth not rediscovering, and the two pieces of
 work queued next. Written to be enough for a cold start — a new contributor or a
 fresh assistant session should be able to work from this file alone.
 
-Last updated: 2026-08-22, at commit `6776dbf`.
+Last updated: 2026-08-22, after the hosted API landed (previous revision: commit `4113aa9`).
 
 ---
 
@@ -21,9 +21,10 @@ returns the structurally closest maps out of 151,558, live, in a browser page.
 | Corpus | 151,558 osu!standard maps per mod variant, from the `2026_08_01` ppy dump |
 | Variants built | `nomod`, `DT`, `HR`, `DTHR`, `HT` |
 | Feature vector | 96 columns in 5 groups — aim 27, speed 14, rhythm 24, spacing 17, parameters 14 |
-| Search | ~15–100 ms |
-| Tests | 37, all passing |
+| Search | ~10 ms (was 250 ms on dense star bands, see §5) |
+| Tests | 75, all passing |
 | Distribution | prebuilt `nomod` index as a GitHub release asset, 164 MB |
+| Hosted API | shipped, optional: `/api/v1`, see `docs/API.md` |
 | On disk here | `data/corpus` 359 MB, `data/index` 1.1 GB |
 
 Everything under `data/` is generated and gitignored. The repo itself is ~1 MB.
@@ -48,6 +49,9 @@ resolve to the Microsoft Store stub and fail. Always use the project venv:
 | Quality check on known maps | `scripts\sanity_check.py --why` |
 | Feature sanity on a sample | `scripts\featurize_sample.py --n 3000` |
 | Pack a release asset | `scripts\pack_release.py --variant nomod` |
+| Run the hosted API | `.venv\Scripts\python.exe -m osureco.api --port 8080` |
+| Install an index for a server | `scripts\fetch_index.py --variants nomod,DT` |
+| See what is installed | `scripts\fetch_index.py --check --variants nomod,DT` |
 | Phase-1 tosu diagnostic | `scripts\sync_probe.py` |
 
 A full rebuild is ~2 minutes of featurisation per variant on 24 cores, plus ~12 s
@@ -66,7 +70,8 @@ otherwise look like a valid corpus of eleven maps).
 src/osureco/
   features.py   the core: featurize(), FEATURE_SPEC, Mods, .osu parser      775 l
   index.py      Scaler, Searcher, SearcherSet, search, explain()            693 l
-  server.py     FastAPI: /api/similar, /api/current, /events (SSE), /       280 l
+  api.py        the hosted API: /api/v1, quota, token, CORS, upload      1075 l
+  server.py     FastAPI: /api/similar, /api/current, /events (SSE), /       288 l
   corpus.py     batch build, multiprocessing, chunked parquet, resume       280 l
   tosu.py       websocket client, debounce, live featurisation             249 l
   launcher.py   one-click bootstrap: fetch index, start server              200 l
@@ -79,6 +84,12 @@ featurize() → scaler → weighted distance over pre-filtered candidates → JS
 
 Data flow, batch: `dump → ProcessPoolExecutor → featurize() → parquet chunks →
 RobustScaler → vectors.npy + vectors_raw.npy + usearch index + SQLite`.
+
+Data flow, remote: `client → POST /api/v1/similar{,/file} → md5 lookup in the
+corpus, else featurize() → same scaler, same distance → JSON`. `server.py` and
+`api.py` mount the **same router** (`build_router`), so the local host and a
+hosted one speak one protocol — that is what makes a client's remote → local
+fallback a change of base URL and nothing else.
 
 ---
 
@@ -107,6 +118,12 @@ when there are no mods, so the nomod path is exactly what built the corpus.
 ones.** With `HDDT` active, `variant_for_mods` gives `DT` and the watcher
 featurises with `"DT"` — because the DT corpus was built with `"DT"`. Featurising
 the query with `HDDT` against a `DT` corpus would introduce a silent bias.
+
+**The local server and the hosted API mount the same router.** `build_router()`
+in `api.py` is included by both; the only difference is the `ApiConfig` handed
+to it (`ApiConfig.local()` has no quota and no token). Adding an endpoint to one
+and not the other would break the property that a client can switch hosts by
+changing a base URL, which is the whole point of the remote mode.
 
 **`stars` is a filter, not a feature.** It correlates 0.99 with `d_aim` and is
 near-constant inside a star band. It lives in `META_NAMES`.
@@ -162,6 +179,26 @@ zeroing its whole geometry — the threshold is now `max(1000 ms, 4 × median ga
 **`song_key()` deduplicates on title only.** The artist field is too unstable to
 group a song (`Aiurabu` vs `Aiurabu (CV: Nakajima Yui, …)`).
 
+**`vectors.npy` is column-major, and that broke the ANN path.**
+`DataFrame.to_numpy()` returns a Fortran-ordered array, so `np.save` wrote one,
+so a single row read back from the memory-mapped file is *not* contiguous — and
+usearch refuses a non-contiguous query with `Matrix rows must be contiguous`.
+It only fired when the pre-filter left more than `EXACT_LIMIT` (30,000)
+candidates, i.e. on any mid-star map, which is most of the corpus; the maps used
+for sanity checks were all 5–12★ and sat below the threshold. Fixed in three
+places: `Scaler.transform` now returns C-order (new builds), `target_from_checksum`
+copies contiguously, and `search` guards the usearch call (indexes already
+distributed). `tests/test_search.py` writes its fixture in Fortran order on
+purpose.
+
+**The SQL pre-filter cost 250 ms, twenty-five times the search itself.**
+`idx_maps_stars` finds the rows by star rating quickly, but testing `length_s`,
+`beatmapset_id` and `checksum` sends SQLite to fetch 30,000 rows one by one.
+The same conditions over three numpy columns held in memory (3.6 MB per variant,
+loaded once at startup) take under a millisecond. `_candidates` is now numpy;
+`tests/test_search.py` compares it against the old SQL on every map of its
+corpus rather than trusting the reading. Total search: 250 ms → ~4 ms.
+
 ---
 
 ## 6. Next: finish mod coverage
@@ -210,47 +247,62 @@ is the tool.
 
 ---
 
-## 7. Next: local mode or hosted API
+## 7. Hosted API — shipped, client side still open
 
-The goal is that a non-technical player is not asked to download 164 MB or to
-have Python work. Local stays the default and the fallback — if the hosted API
-goes down, the tool must keep working, which is precisely how the original
-OsuMapMatcher died.
+### What exists now
 
-### The real design question
+`src/osureco/api.py` serves `/api/v1` and is deployable
+(`deploy/`: Dockerfile, compose, systemd unit, Caddy and nginx examples;
+`deploy/README.md` for sizing and operations, `docs/API.md` for the contract).
 
-The live map's `.osu` is on the player's machine, served by tosu. Something has
-to turn it into a vector. Where that happens decides everything:
+The design question from the previous handoff — featurise on the client or on
+the server — was answered with **both**, because the answer differs per client
+and the two paths cost almost the same to support:
 
-**Option A — featurise locally, query remotely.** The client keeps Python,
-`rosu-pp-py` and `numpy` (~40 MB of wheels), runs `featurize()`, and POSTs 96
-floats. No index download, tiny payloads, nothing about the player's files leaves
-the machine. Server needs a `POST /api/similar` accepting a raw vector.
+  1. `checksum` → the vector is already on disk, zero CPU;
+  2. `features` (a dict keyed by name) → the client did the work;
+  3. the raw `.osu` → the server featurises, ~20 ms.
 
-**Option B — upload the `.osu`, featurise server-side.** The client sends a ~40 KB
-file and needs *no* scientific dependencies at all. This is the option that could
-eventually make the tool a pure HTML/JS **tosu counter**, which is the only way it
-would ever fit the tosu counter library — those are static pages served by tosu
-itself and cannot host a Python backend. Costs: beatmap files transit to the
-server, and the server pays the CPU.
+The decision that made option B cheap: **a map's checksum is the MD5 of its
+`.osu`**, so `/similar/file` hashes the body and looks it up in the corpus
+before doing anything. Every ranked map costs nothing to "featurise". Only
+unsubmitted or edited maps hit the CPU. A dependency-free HTML/JS client can
+therefore always post the file and still be nearly free to serve — which is
+what a tosu counter needs.
 
-Option B is more work and more server load, but it is the one that unlocks the
-distribution channel the project actually wants. Worth deciding deliberately
-rather than defaulting to A because it is easier.
+Both paths end in `target_from_features`, the same function the live desktop
+path uses. There is no second implementation of anything.
 
-### Either way
+Measured, one uvicorn worker, 24-core machine: 134 searches/s at 16 concurrent
+clients, 101 uploads/s at 8; ~180 MB resident with `nomod` warm.
 
-- `search()` already takes a `QueryTarget`, so a remote endpoint is mostly
-  request plumbing rather than new logic.
-- The client needs a **mode switch** (`local` / `remote`) surfaced in the UI, with
-  automatic fallback to local when the remote is unreachable, and an honest
-  status indicator — the header already has one.
-- The server side needs CORS, rate limiting, and a pinned corpus version so a
-  client's vector and the server's index always share the same `FEATURE_NAMES`.
-  **Send a feature-set version with every request and reject mismatches** — a
-  silently misaligned vector produces plausible-looking nonsense.
-- `OSURECO_INDEX_URL` is already the precedent for pointing the client elsewhere;
-  a `OSURECO_API_URL` would sit naturally beside it.
+Guards, all env-tunable: CORS, optional bearer token, per-IP token bucket
+(uploads cost 5× a search), 4 MB body cap, CPU semaphore, LRU on featurisation.
+And the one that matters: **`feature_version`**, a hash of `FEATURE_NAMES`
+returned by every response and rejected with 409 on mismatch — a vector built
+from a different feature set produces plausible, wrong answers, silently.
+
+### What is still open
+
+**The client half.** Nothing in the desktop tool talks to a remote API yet:
+
+- a `local` / `remote` mode switch in `static/index.html`, surfaced in the
+  header next to the existing status indicator;
+- `OSURECO_API_URL` beside the existing `OSURECO_INDEX_URL`;
+- automatic fallback to local on 429, 503, timeout **or** `feature_version`
+  mismatch, said out loud in the interface rather than silently;
+- the page currently calls `/api/similar` and `/api/current`; `/api/v1/similar`
+  is mounted on the local server too, so switching the page to v1 is mostly
+  deleting the old endpoint afterwards.
+
+**A tosu counter** as a separate deliverable: a static page in the counter
+format, pointing at a hosted instance, with the checksum-first / upload-on-404
+flow from `docs/API.md`. This is the distribution channel the API was built
+for; it does not exist yet.
+
+**Rate limits are per worker** (each process has its own bucket). Fine for one
+worker; with several, either halve the setting or move the limit to the reverse
+proxy.
 
 ---
 
@@ -268,6 +320,14 @@ rather than defaulting to A because it is easier.
   noise.
 - **Slider shapes** are ignored entirely (v1 decision): no curve types, no
   repeats, no SV.
+- **Rebuild the indexes** so `vectors.npy` lands in C order. Purely a
+  performance matter now that reading handles both — `scripts/build_index.py`
+  from the existing parquet corpus, no re-featurisation needed. Measured gain
+  on a 31k-row gather: 13 ms → 6 ms.
+- **`EXACT_LIMIT` may no longer earn its place.** The ANN detour exists because
+  scoring 30,000 candidates was slow; now that the pre-filter is numpy, exact
+  scoring of the whole band is a few milliseconds. Dropping the ANN path would
+  also remove `index.usearch` (81 MB) from the release asset.
 
 ---
 

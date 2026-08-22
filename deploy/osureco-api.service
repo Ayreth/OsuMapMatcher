@@ -1,0 +1,50 @@
+# /etc/systemd/system/osureco-api.service
+#
+#   sudo useradd --system --home /var/lib/osureco --create-home osureco
+#   sudo git clone https://github.com/Ayreth/OsuMapMatcher /opt/osureco
+#   sudo python3 -m venv /opt/osureco/.venv
+#   sudo /opt/osureco/.venv/bin/pip install -e "/opt/osureco[api]"
+#   sudo -u osureco OSURECO_DATA=/var/lib/osureco \
+#        /opt/osureco/.venv/bin/python /opt/osureco/scripts/fetch_index.py
+#   sudo systemctl enable --now osureco-api
+
+[Unit]
+Description=osu!MapMatcher API
+Documentation=https://github.com/Ayreth/OsuMapMatcher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=osureco
+Group=osureco
+WorkingDirectory=/opt/osureco
+Environment=OSURECO_DATA=/var/lib/osureco
+Environment=OSURECO_API_VARIANTS=nomod
+Environment=OSURECO_API_CORS=*
+Environment=OSURECO_API_RATE=120
+Environment=OSURECO_API_TRUST_PROXY=1
+# secrets et surcharges locales, absence toleree (le tiret)
+EnvironmentFile=-/etc/osureco/api.env
+ExecStart=/opt/osureco/.venv/bin/uvicorn osureco.api:app \
+          --host 127.0.0.1 --port 8080 --workers 2
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=20s
+
+# durcissement : le service ne lit qu'un index et n'ecrit nulle part
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+ReadWritePaths=/var/lib/osureco
+
+[Install]
+WantedBy=multi-user.target

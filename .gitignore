@@ -20,6 +20,9 @@ venv/
 build/
 dist/
 
+# per-deployment settings, including any API token
+deploy/.env
+
 # third-party binaries the user installs themselves
 tosu/
 

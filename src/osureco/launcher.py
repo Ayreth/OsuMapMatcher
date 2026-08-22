@@ -35,7 +35,6 @@ from pathlib import Path
 
 from .paths import PROJECT_ROOT, data_dir, describe_dump, find_dump, index_root
 
-ASSET_NAME = "osureco-index-nomod.zip"
 #: last-resort source, used when there is no git remote to read (ZIP downloads)
 UPSTREAM_SLUG = "Ayreth/OsuMapMatcher"
 #: files that must all be present for a variant folder to count as usable
@@ -57,12 +56,23 @@ def remote_slug() -> str | None:
     return f"{match.group(1)}/{match.group(2)}" if match else None
 
 
-def index_url() -> str:
+def asset_name(variant: str = "nomod") -> str:
+    return f"osureco-index-{variant}.zip"
+
+
+def index_url(variant: str = "nomod") -> str:
+    """
+    OSURECO_INDEX_URL peut etre soit une URL complete (une seule variante),
+    soit un dossier se terminant par "/" sous lequel les archives portent leur
+    nom habituel -- c'est ce qui permet a un serveur de tirer plusieurs
+    variantes depuis un meme miroir.
+    """
     override = os.environ.get("OSURECO_INDEX_URL")
     if override:
-        return override
+        return override + asset_name(variant) if override.endswith("/") else override
     slug = remote_slug() or UPSTREAM_SLUG
-    return f"https://github.com/{slug}/releases/latest/download/{ASSET_NAME}"
+    return (f"https://github.com/{slug}/releases/latest/download/"
+            f"{asset_name(variant)}")
 
 
 def has_index(variant: str = "nomod") -> bool:
@@ -79,8 +89,8 @@ def _report(done: int, total: int) -> None:
         print(f"\r  {done / 1e6:.0f} MB", end="", flush=True)
 
 
-def download_index(url: str) -> bool:
-    print(f"Downloading the prebuilt index from:\n  {url}")
+def download_index(url: str, variant: str = "nomod") -> bool:
+    print(f"Downloading the prebuilt {variant} index from:\n  {url}")
     target = index_root()
     target.mkdir(parents=True, exist_ok=True)
     request = urllib.request.Request(url, headers={"User-Agent": "osureco-launcher"})
@@ -112,11 +122,30 @@ def download_index(url: str) -> bool:
     finally:
         archive.unlink(missing_ok=True)
 
-    if not has_index():
+    if not has_index(variant):
         print("  the archive did not contain a usable index.")
         return False
     print(f"Index ready in {target}")
     return True
+
+
+def ensure_index(variants: list[str] | tuple[str, ...] = ("nomod",)) -> bool:
+    """
+    Garantit la presence des variantes demandees, en telechargeant les absentes.
+
+    Utilise au demarrage d'un serveur : une machine neuve doit pouvoir servir
+    l'API sans qu'on y copie 300 Mo a la main.
+    """
+    ok = True
+    for variant in variants:
+        if has_index(variant):
+            print(f"  index {variant}: already installed")
+            continue
+        url = index_url(variant)
+        if not download_index(url, variant):
+            print(f"  index {variant}: unavailable at {url}")
+            ok = False
+    return ok
 
 
 # --- local build --------------------------------------------------------------
