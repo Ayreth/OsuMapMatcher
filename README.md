@@ -90,9 +90,10 @@ other maps at 1.5×.
 | `src/osumapmatcher/` | the engine: featurisation, index, search, local server, API |
 | `scripts/` | build an index from a beatmap dump, pack a release, build the overlay |
 | `deploy/` | Dockerfile, compose, systemd unit, reverse proxy examples |
-| `docs/` | [the HTTP API](docs/API.md), [the handoff](docs/HANDOFF.md) |
+| `docs/` | [the HTTP API](docs/API.md) |
 | `counter/osu-mapmatcher/` | the overlay, generated from the page — published in [its own repository](https://github.com/Ayreth/OsuMapMatcher-overlay) |
 | `start.bat` | one click: installs what is needed, then runs everything locally |
+| `CHANGELOG.md` | [what changed, and when](CHANGELOG.md) |
 
 ## Requirements
 
