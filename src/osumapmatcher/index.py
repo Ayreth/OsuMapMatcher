@@ -22,6 +22,19 @@ Ici :
 Recherche : pre-filtrage SQL (bande d'etoiles, longueur, meme beatmapset), puis
 distance exacte ponderee par groupe sur les seuls candidats retenus. L'index ANN
 prend le relais quand le pre-filtrage laisse trop de candidats.
+
+Trois facons de poser la question, toutes servies par la meme `Searcher.search` :
+
+  * une map           -- le cas d'origine ;
+  * plusieurs maps    -- `combine_targets` en fait un centroide, et la bande
+    d'etoiles couvre alors de la plus facile a la plus dure au lieu du centre,
+    sans quoi deux graines eloignees s'excluraient mutuellement du resultat ;
+  * une map et un contre-exemple -- `avoid`, qui penalise la proximite au
+    repoussoir. Le choix de la formule est mesure et explique dans `search`.
+
+Et une facon de trier ce qui en sort : `group_filter`, qui ne garde que les maps
+dont l'ecart vient surtout d'un groupe donne. Il ne coute rien, `group_share`
+etant deja calcule pour chaque resultat.
 """
 
 from __future__ import annotations
@@ -48,8 +61,10 @@ from .features import (
 
 __all__ = [
     "VARIANTS", "variant_for_mods", "Scaler", "Searcher", "SearcherSet",
-    "Match", "QueryTarget", "build", "explain", "song_key", "normalise_weights",
-    "DEFAULT_STAR_RANGE", "DEFAULT_LENGTH_RATIO", "DUMP_STATUS", "RANKED_STATUSES",
+    "Match", "QueryTarget", "SeedRef", "combine_targets",
+    "build", "explain", "song_key", "normalise_weights",
+    "DEFAULT_STAR_RANGE", "DEFAULT_LENGTH_RATIO", "DEFAULT_AVOID_STRENGTH",
+    "DUMP_STATUS", "RANKED_STATUSES",
 ]
 
 SCALER_FILE = "scaler.npz"
@@ -113,6 +128,15 @@ DEFAULT_STAR_RANGE = 0.5
 DEFAULT_LENGTH_RATIO = (0.5, 2.0)
 #: constante de temps de la conversion distance -> pourcentage de similarite
 SIMILARITY_SCALE = 6.0
+
+#: force de la penalite du contre-exemple, mesuree (voir `search`). A 0,15 elle
+#: ne mord pas assez pour changer quoi que ce soit sur certaines cibles ; a 0,30
+#: elle coute 3 % de distance a la cible et rend 25 % de distance au repoussoir.
+DEFAULT_AVOID_STRENGTH = 0.30
+#: et au-dela de ca, "comme celle-ci" ne veut plus rien dire : mesure sur une map
+#: a 5,5 etoiles, un beta de 0,90 sort un premier resultat a 3,34 de la cible la
+#: ou la recherche ordinaire trouve 1,11. La raison est geometrique, voir `search`.
+MAX_AVOID_STRENGTH = 0.75
 
 
 
@@ -546,6 +570,48 @@ def _weight_vector(weights: dict[str, float]) -> np.ndarray:
     return out
 
 
+@dataclass(frozen=True)
+class SeedRef:
+    """
+    Une graine d'une recherche multi-maps, une fois le centroide calcule.
+
+    Son vecteur n'est plus la -- il a ete moyenne -- mais ses etoiles, sa duree
+    et son beatmapset servent encore au pre-filtrage, et son libelle a
+    l'interface, qui doit pouvoir montrer de quoi la moyenne est faite.
+    """
+
+    checksum: str
+    beatmap_id: int
+    beatmapset_id: int
+    stars: float
+    length_s: float
+    bpm: float
+    label: str
+
+    @classmethod
+    def of(cls, target: "QueryTarget") -> "SeedRef":
+        return cls(
+            checksum=target.checksum,
+            beatmap_id=target.beatmap_id,
+            beatmapset_id=target.beatmapset_id,
+            stars=target.stars,
+            length_s=target.length_s,
+            bpm=target.bpm,
+            label=target.label,
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "checksum": self.checksum,
+            "beatmap_id": self.beatmap_id,
+            "beatmapset_id": self.beatmapset_id,
+            "stars": round(self.stars, 2),
+            "bpm": round(self.bpm, 1),
+            "length_s": round(self.length_s, 1),
+            "label": self.label,
+        }
+
+
 @dataclass
 class QueryTarget:
     vector: np.ndarray
@@ -557,6 +623,110 @@ class QueryTarget:
     checksum: str
     label: str
     beatmap_id: int = 0
+    #: graines d'une recherche multi-maps. Vide pour une cible ordinaire, et
+    #: tout ce qui suit se comporte alors exactement comme avant.
+    seeds: tuple[SeedRef, ...] = ()
+
+    @property
+    def is_centroid(self) -> bool:
+        """
+        Cette cible est-elle une map fictive ?
+
+        Ca change ce que veulent dire les explications : elles ne comparent plus
+        a une vraie map mais a la moyenne des choix de l'utilisateur, et
+        l'interface doit le dire au lieu de laisser croire le contraire.
+        """
+        return len(self.seeds) > 1
+
+    @property
+    def star_span(self) -> tuple[float, float]:
+        """
+        Bande d'etoiles a couvrir AVANT d'y ajouter `star_range`.
+
+        Avec des graines a 4 et 7 etoiles, le centroide tombe a 5,5 : garder
+        `centre +/- range` ecarterait mecaniquement les deux extremites, donc
+        exactement les maps qui ressemblent le plus a ce qu'on a demande. On
+        couvre donc [min, max], que `star_range` elargit ensuite des deux cotes.
+        """
+        if not self.seeds:
+            return (self.stars, self.stars)
+        values = [seed.stars for seed in self.seeds]
+        return (min(values), max(values))
+
+    @property
+    def length_span(self) -> tuple[float, float]:
+        """Meme raisonnement que `star_span`, pour la duree."""
+        if not self.seeds:
+            return (self.length_s, self.length_s)
+        values = [seed.length_s for seed in self.seeds]
+        return (min(values), max(values))
+
+    @property
+    def excluded_sets(self) -> tuple[int, ...]:
+        """Beatmapsets a ecarter : celui de CHAQUE graine, pas seulement un."""
+        found = {seed.beatmapset_id for seed in self.seeds if seed.beatmapset_id}
+        if self.beatmapset_id:
+            found.add(self.beatmapset_id)
+        return tuple(sorted(found))
+
+    @property
+    def excluded_checksums(self) -> tuple[str, ...]:
+        """Une graine ne peut pas etre sa propre recommandation."""
+        found = {seed.checksum for seed in self.seeds if seed.checksum}
+        if self.checksum:
+            found.add(self.checksum)
+        return tuple(sorted(found))
+
+
+def combine_targets(targets: Sequence[QueryTarget]) -> QueryTarget:
+    """
+    Reduit plusieurs graines a une cible unique : le centroide de leurs vecteurs.
+
+    La moyenne se fait dans l'espace SCALE, celui ou vivent les distances -- une
+    moyenne de valeurs brutes serait dominee par les colonnes en grandes unites,
+    ce qui est le bug d'origine du projet. Les valeurs brutes sont moyennees
+    aussi, mais uniquement pour les explications : "180 BPM" y designe alors la
+    moyenne des BPM choisis, pas ceux d'une map reelle.
+
+    Pas de ponderation des graines : mesure faite, une ponderation par nombre de
+    plays ou par recence deplacait le centroide de moins que le bruit du corpus
+    sur les jeux d'essai. Une option qui ne change rien est une option de trop.
+
+    Une graine unique est renvoyee telle quelle, avec sa propre identite : il n'y
+    a aucune raison de fabriquer une map fictive la ou il y a une vraie map, et
+    les explications resteraient fausses pour rien.
+    """
+    if not targets:
+        raise ValueError("no seed to search from")
+
+    seeds = tuple(SeedRef.of(target) for target in targets)
+    if len(targets) == 1:
+        only = targets[0]
+        return QueryTarget(
+            vector=only.vector, raw=only.raw,
+            stars=only.stars, length_s=only.length_s, bpm=only.bpm,
+            beatmapset_id=only.beatmapset_id, checksum=only.checksum,
+            label=only.label, beatmap_id=only.beatmap_id, seeds=seeds,
+        )
+
+    vectors = np.stack([np.asarray(t.vector, dtype=np.float32) for t in targets])
+    raws = np.stack([np.asarray(t.raw, dtype=np.float32) for t in targets])
+    count = len(targets)
+    return QueryTarget(
+        # contigu : la cible part telle quelle dans usearch sur le chemin ANN
+        vector=np.ascontiguousarray(vectors.mean(axis=0), dtype=np.float32),
+        raw=np.ascontiguousarray(raws.mean(axis=0), dtype=np.float32),
+        stars=float(np.mean([t.stars for t in targets])),
+        length_s=float(np.mean([t.length_s for t in targets])),
+        bpm=float(np.mean([t.bpm for t in targets])),
+        # un centroide n'est aucune map : lui preter un beatmapset ou un
+        # checksum ferait mentir tout ce qui s'en sert (exclusions, liens)
+        beatmapset_id=0,
+        checksum="",
+        label=f"centroid of {count} maps",
+        beatmap_id=0,
+        seeds=seeds,
+    )
 
 
 class Searcher:
@@ -715,21 +885,41 @@ class Searcher:
         length_ratio: tuple[float, float] | None,
         exclude_same_set: bool,
         allow_unranked: bool = True,
+        avoid: QueryTarget | None = None,
     ) -> np.ndarray:
         stars, lengths, sets, valid, unranked = self._filters
-        keep = valid & (np.abs(stars - target.stars) <= star_range)
+        # `star_span` vaut (stars, stars) pour une cible ordinaire : la bande
+        # reste alors identique a ce qu'elle a toujours ete. Avec plusieurs
+        # graines elle couvre de la plus facile a la plus dure, voir QueryTarget.
+        star_low, star_high = target.star_span
+        keep = valid & (stars >= star_low - star_range) & (stars <= star_high + star_range)
         if not allow_unranked:
             keep &= ~unranked
-        if length_ratio and target.length_s > 0:
-            keep &= (lengths >= target.length_s * length_ratio[0]) & (
-                lengths <= target.length_s * length_ratio[1]
-            )
-        if exclude_same_set and target.beatmapset_id:
-            keep &= sets != target.beatmapset_id
-        if target.checksum:
-            # la map interrogee ne peut pas etre sa propre recommandation ; une
-            # map live absente du corpus n'a simplement pas de position
-            position = self._position_of(target.checksum)
+        if length_ratio:
+            length_low, length_high = target.length_span
+            if length_low > 0:
+                keep &= lengths >= length_low * length_ratio[0]
+            if length_high > 0:
+                keep &= lengths <= length_high * length_ratio[1]
+        excluded_sets = set(target.excluded_sets)
+        excluded_checksums = set(target.excluded_checksums)
+        if avoid is not None:
+            # repondre "pas comme celle-la" en proposant celle-la serait absurde,
+            # et la penalite ne suffit pas a l'ecarter : le repoussoir est a
+            # distance nulle de lui-meme, donc c'est lui que la penalite epargne
+            # le plus. Mesure a beta=0,15 : il ressortait 4e.
+            excluded_checksums |= set(avoid.excluded_checksums)
+            if exclude_same_set:
+                excluded_sets |= set(avoid.excluded_sets)
+        if exclude_same_set and excluded_sets:
+            if len(excluded_sets) == 1:
+                keep &= sets != next(iter(excluded_sets))
+            else:
+                keep &= ~np.isin(sets, np.asarray(sorted(excluded_sets), dtype=np.int64))
+        for checksum in sorted(excluded_checksums):
+            # une graine ne peut pas etre sa propre recommandation ; une map
+            # live absente du corpus n'a simplement pas de position
+            position = self._position_of(checksum)
             if position >= 0:
                 keep[position] = False
         return np.flatnonzero(keep).astype(np.int64)
@@ -748,9 +938,54 @@ class Searcher:
         max_per_song: int = 1,
         diverge: str | None = None,
         allow_unranked: bool = True,
+        group_filter: str | None = None,
+        avoid: QueryTarget | None = None,
+        avoid_strength: float = DEFAULT_AVOID_STRENGTH,
     ) -> list[Match]:
+        """
+        Les voisins de `target`, filtres puis classes.
+
+        `avoid` est le contre-exemple : "comme celle-ci, mais pas comme
+        celle-la". Le classement se fait alors sur
+
+            score = d(x, cible)^2 - beta * d(x, repoussoir)^2
+
+        Deux pistes avaient ete envisagees, penalite et marge dure (ne garder que
+        les maps plus proches de la cible que du repoussoir). La marge dure a ete
+        ecartee sur mesure : sa severite depend entierement de la distance entre
+        cible et repoussoir, que l'utilisateur ne controle pas. Sur deux cas
+        reels elle gardait 33 % des candidats dans l'un et 6 % dans l'autre --
+        soit presque rien, soit presque tout, sans que rien ne l'annonce.
+
+        La penalite, elle, est previsible, et pour une bonne raison : a beta fixe
+        elle equivaut EXACTEMENT a chercher autour du point extrapole
+        `(c - beta*r) / (1 - beta)`, verifie numeriquement sur les 50 premiers
+        resultats. C'est aussi ce qui impose `MAX_AVOID_STRENGTH` : quand beta
+        tend vers 1 ce point part a l'infini, hors des donnees, et la recherche
+        cesse de vouloir dire "comme celle-ci".
+
+        Ce qu'elle coute et ce qu'elle rend, mesure sur une map a 5,5 etoiles
+        dont le repoussoir est le voisin #1 :
+
+            beta    d(cible)   d(repoussoir)   communs avec la liste de base
+            0.00      1.114        1.121                10/10
+            0.15      1.122        1.235                 7/10
+            0.30      1.146        1.396                 6/10
+            0.50      1.188        1.471                 5/10
+            0.90      2.585        2.966                 0/10
+
+        `Match.distance` reste la vraie distance a la cible : le score penalise
+        classe, il ne s'affiche pas. Un pourcentage de similarite qui bougerait
+        parce qu'on a nomme un repoussoir mentirait sur ce qu'il mesure.
+        """
         if diverge and diverge not in GROUP_NAMES:
             raise KeyError(f"Unknown diverge group: {diverge}")
+        if group_filter and group_filter not in GROUP_NAMES:
+            raise KeyError(f"Unknown group filter: {group_filter}")
+        if not 0.0 <= avoid_strength <= MAX_AVOID_STRENGTH:
+            raise ValueError(
+                f"avoid_strength must be between 0 and {MAX_AVOID_STRENGTH}."
+            )
         resolved = normalise_weights(weights)
         weight_vector = _weight_vector(resolved)
 
@@ -760,9 +995,20 @@ class Searcher:
             length_ratio=length_ratio,
             exclude_same_set=exclude_same_set,
             allow_unranked=allow_unranked,
+            avoid=avoid,
         )
         if candidates.size == 0:
             return []
+
+        # Le point autour duquel l'ANN doit degrossir. Sans repoussoir c'est la
+        # cible ; avec, c'est le point extrapole -- le score penalise classe
+        # exactement comme la distance a ce point-la, donc degrossir autour de
+        # lui est le bon pre-tri et pas une approximation de plus.
+        probe = target.vector
+        if avoid is not None and avoid_strength > 0.0:
+            probe = (target.vector - avoid_strength * avoid.vector) / (
+                1.0 - avoid_strength
+            )
 
         # L'index ANN classe par distance totale ; en mode divergence on cherche
         # au contraire les plus eloignes sur un groupe, donc son pre-tri
@@ -770,11 +1016,13 @@ class Searcher:
         if candidates.size > EXACT_LIMIT and not diverge:
             # Trop de candidats pour un scoring exact : l'index ANN degrossit,
             # puis on re-score exactement les survivants du filtre.
-            wanted = min(k * OVERSAMPLE, int(self.index.size))
+            # un groupe dominant sur cinq : sans elargir ici, le filtre couperait
+            # dans une liste deja tronquee par l'ANN et rendrait moins de k
+            wanted = min(k * OVERSAMPLE * (5 if group_filter else 1), int(self.index.size))
             # ceinture et bretelles : la cible peut venir d'un appelant qui a
             # fabrique son vecteur autrement (l'API distante, par exemple)
             hits = self.index.search(
-                np.ascontiguousarray(target.vector, dtype=np.float32), count=wanted
+                np.ascontiguousarray(probe, dtype=np.float32), count=wanted
             )
             keys = np.asarray(hits.keys, dtype=np.int64).ravel()
             allowed = np.isin(keys, candidates, assume_unique=False)
@@ -791,16 +1039,38 @@ class Searcher:
             group: squared[:, GROUP_INDICES[group]].sum(axis=1) for group in GROUP_NAMES
         }
 
+        # `score` est ce qui CLASSE, `total` ce qui s'affiche. Sans repoussoir
+        # les deux sont le meme tableau et rien ne change.
+        score = total
+        if avoid is not None and avoid_strength > 0.0:
+            gap = (block - avoid.vector) * weight_vector
+            score = total - avoid_strength * (gap * gap).sum(axis=1)
+
         if diverge:
             # "pareil mais different" : on reste proche sur tous les groupes sauf
             # un, puis on classe par eloignement maximal sur celui-la. C'est ce
             # qu'on veut pour s'entrainer -- meme competence, autre habillage.
-            near = total - per_group_all[diverge]
+            near = score - per_group_all[diverge]
             pool_size = min(near.size, max(k * 20, 200))
             pool = np.argpartition(near, pool_size - 1)[:pool_size]
             ordering = pool[np.argsort(-per_group_all[diverge][pool])]
         else:
-            ordering = np.argsort(total)
+            ordering = np.argsort(score)
+
+        if group_filter:
+            # "montre-moi celles qui different surtout en aim" : c'est le groupe
+            # qui pese le plus dans la distance, donc `group_share` -- deja
+            # calcule, rien a recalculer. Le tri par part evite une division :
+            # a distance totale fixee, comparer les carres suffit.
+            #
+            # Le masque s'applique a l'ORDRE, pas a la liste finale. Couper apres
+            # coup rognerait la liste au lieu de la remplir : c'est exactement le
+            # piege du dedoublonnage par chanson, qui prend large avant de couper.
+            stacked = np.stack([per_group_all[group] for group in GROUP_NAMES])
+            dominant = np.argmax(stacked, axis=0)
+            ordering = ordering[dominant[ordering] == GROUP_NAMES.index(group_filter)]
+            if ordering.size == 0:
+                return []
 
         # on prend large avant de dedoublonner, sinon retirer les doublons
         # rognerait la liste au lieu de la remplir
