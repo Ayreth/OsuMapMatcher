@@ -22,6 +22,11 @@ checksum d'une map EST le md5 de son .osu, donc une map ranked envoyee telle
 quelle ne coute rien non plus. Seules les maps non soumises ou editees sont
 reellement featurisees.
 
+Une quatrieme forme part de PLUSIEURS maps : `POST /similar/multi` prend une
+liste de checksums et de beatmap_ids, en fait un centroide et rend ses voisins.
+La reponse garde la meme forme que les autres ; seul `query` change de sens et
+decrit l'ensemble des graines.
+
 Garde-fous, tous reglables par variable d'environnement : CORS, jeton optionnel,
 seau a jetons par IP, taille d'upload bornee, semaphore sur le travail CPU. Et
 surtout le controle de version du jeu de features : un vecteur calcule avec un
@@ -72,7 +77,15 @@ from .features import (
     featurize_detailed,
     variant_for_mods,
 )
-from .index import DEFAULT_STAR_RANGE, QueryTarget, Searcher, SearcherSet
+from .index import (
+    DEFAULT_AVOID_STRENGTH,
+    DEFAULT_STAR_RANGE,
+    MAX_AVOID_STRENGTH,
+    QueryTarget,
+    Searcher,
+    SearcherSet,
+    combine_targets,
+)
 from .paths import index_root
 
 log = logging.getLogger(__name__)
@@ -80,6 +93,14 @@ log = logging.getLogger(__name__)
 API_PREFIX = "/api/v1"
 #: nombre de seaux a jetons gardes en memoire avant nettoyage
 _MAX_BUCKETS = 20_000
+#: graines acceptees par /similar/multi. Chacune ne coute qu'une lecture SQL,
+#: mais un centroide de cinquante maps ne veut plus rien dire : la borne est la
+#: pour l'utilisateur autant que pour le serveur.
+MAX_SEEDS = 20
+#: au-dela de cet ecart d'etoiles entre graines, le centroide est un compromis
+#: que personne n'a demande -- mesure : des graines a 3,0 et 8,0 etoiles sortent
+#: des resultats a 6 etoiles. On le dit dans `warnings` plutot que de le taire.
+WIDE_SPAN_STARS = 2.0
 
 
 # --- configuration ------------------------------------------------------------
@@ -329,12 +350,13 @@ class SearchService:
         searcher: Searcher,
         target: QueryTarget,
         options: "SearchOptions",
+        avoid: QueryTarget | None = None,
     ) -> list[Any]:
         lock = self._lock(variant)
 
         def run() -> list[Any]:
             with lock:
-                return searcher.search(target, **options.search_kwargs())
+                return searcher.search(target, **options.search_kwargs(avoid))
 
         async with self._semaphore:
             try:
@@ -423,9 +445,28 @@ class SearchOptions(BaseModel):
     #: les maps non classees entrent dans le pool par defaut ; un client
     #: qui ne veut que du telechargeable normalement passe False
     allow_unranked: bool = True
+    #: ne garder que les maps dont l'ecart vient surtout de ce groupe
+    group_filter: str | None = None
+    #: le contre-exemple, designe comme une map ordinaire : "comme celle-ci,
+    #: mais pas comme celle-la". Deux facons de le nommer, comme pour la cible.
+    avoid_checksum: str | None = None
+    avoid_beatmap_id: int | None = None
+    avoid_strength: float = Field(
+        DEFAULT_AVOID_STRENGTH, ge=0.0, le=MAX_AVOID_STRENGTH
+    )
     weights: Weights = Field(default_factory=Weights)
 
-    def search_kwargs(self) -> dict[str, Any]:
+    @property
+    def wants_avoid(self) -> bool:
+        return bool(self.avoid_checksum or self.avoid_beatmap_id)
+
+    def search_kwargs(self, avoid: QueryTarget | None = None) -> dict[str, Any]:
+        """
+        Les arguments de `Searcher.search`.
+
+        Le repoussoir arrive resolu de l'exterieur : le transformer en cible
+        demande de lire le corpus, ce qu'un modele pydantic n'a pas a faire.
+        """
         return {
             "k": self.k,
             "star_range": self.star_range,
@@ -435,6 +476,9 @@ class SearchOptions(BaseModel):
             "max_per_song": self.max_per_song,
             "diverge": self.diverge or None,
             "allow_unranked": self.allow_unranked,
+            "group_filter": self.group_filter or None,
+            "avoid": avoid,
+            "avoid_strength": self.avoid_strength,
         }
 
 
@@ -460,9 +504,40 @@ class SimilarRequest(SearchOptions):
     variant: str | None = None
 
 
+class MultiRequest(SearchOptions):
+    """
+    Plusieurs graines : "voila cinq maps que j'adore, trouve-m'en d'autres".
+
+    Les deux facons de nommer une map coexistent dans la meme requete, parce
+    qu'un client les melange forcement : un lien osu! donne un beatmap_id, une
+    map lue en jeu donne un checksum.
+
+    Seules des maps du corpus sont acceptees. Featuriser N fichiers pour en
+    faire une moyenne serait possible mais couterait N fois le prix d'une
+    recherche, et personne ne l'a demande : le cas reel est une liste de maps
+    qu'on aime, donc des maps publiees.
+    """
+
+    checksums: list[str] = Field(default_factory=list)
+    beatmap_ids: list[int] = Field(default_factory=list)
+    mods: str = ""
+    rate: float = Field(1.0, gt=0.0, le=4.0)
+    variant: str | None = None
+
+
 # --- construction de la reponse -----------------------------------------------
 
 def _query_block(target: QueryTarget, mods: str, in_corpus: bool) -> dict[str, Any]:
+    """
+    Ce qui decrit la question posee, une graine ou dix.
+
+    `seeds` et `is_centroid` sont la meme forme partout : une recherche a une
+    map rend une liste d'une graine plutot que rien, pour qu'un client n'ait pas
+    a savoir par quel endpoint il est passe pour lire la reponse. Et
+    `is_centroid` compte : quand il est vrai, les phrases de `differences`
+    comparent a la moyenne des choix et non a une vraie map -- une interface qui
+    l'ignore laisse croire le contraire.
+    """
     return {
         "checksum": target.checksum,
         "beatmap_id": target.beatmap_id,
@@ -472,6 +547,10 @@ def _query_block(target: QueryTarget, mods: str, in_corpus: bool) -> dict[str, A
         "length_s": round(target.length_s, 1),
         "in_corpus": in_corpus,
         "mods": mods,
+        "is_centroid": target.is_centroid,
+        "n_seeds": len(target.seeds),
+        "star_span": [round(v, 2) for v in target.star_span],
+        "seeds": [seed.as_dict() for seed in target.seeds],
     }
 
 
@@ -486,11 +565,26 @@ def _reply(
     source: str,
     warnings: list[str],
     n_maps: int,
+    avoid: QueryTarget | None = None,
 ) -> dict[str, Any]:
     return {
         "query": _query_block(target, mods, in_corpus),
         "variant": variant,
         "diverge": options.diverge or None,
+        "group_filter": options.group_filter or None,
+        # le repoussoir est renvoye tel qu'il a ete compris, pas tel qu'il a ete
+        # demande : un client qui l'a nomme par beatmap_id doit pouvoir verifier
+        # sur quelle map il est reellement tombe
+        "avoid": (
+            {
+                "checksum": avoid.checksum,
+                "beatmap_id": avoid.beatmap_id,
+                "label": avoid.label,
+                "strength": options.avoid_strength,
+            }
+            if avoid is not None
+            else None
+        ),
         "count": len(matches),
         "matches": [match.as_dict() for match in matches],
         "source": source,
@@ -627,6 +721,12 @@ def build_router(service: SearchService) -> APIRouter:
         max_per_song: int = Query(1, ge=0, le=10),
         diverge: str | None = None,
         allow_unranked: bool = True,
+        group_filter: str | None = None,
+        avoid_checksum: str | None = None,
+        avoid_beatmap_id: int | None = None,
+        avoid_strength: float = Query(
+            DEFAULT_AVOID_STRENGTH, ge=0.0, le=MAX_AVOID_STRENGTH
+        ),
         w_aim: float = Query(1.0, ge=0.0, le=2.0),
         w_speed: float = Query(1.0, ge=0.0, le=2.0),
         w_rhythm: float = Query(1.0, ge=0.0, le=2.0),
@@ -642,6 +742,10 @@ def build_router(service: SearchService) -> APIRouter:
             max_per_song=max_per_song,
             diverge=diverge,
             allow_unranked=allow_unranked,
+            group_filter=group_filter,
+            avoid_checksum=avoid_checksum,
+            avoid_beatmap_id=avoid_beatmap_id,
+            avoid_strength=avoid_strength,
             weights=Weights(
                 aim=w_aim,
                 speed=w_speed,
@@ -678,6 +782,37 @@ def build_router(service: SearchService) -> APIRouter:
             raise HTTPException(400, "Empty body: post the .osu file bytes.")
         return raw
 
+    async def resolve_avoid(
+        name: str, searcher: Searcher, options: SearchOptions
+    ) -> QueryTarget | None:
+        """
+        Resout le contre-exemple, ou refuse la requete.
+
+        Un repoussoir introuvable est une erreur et pas un avertissement : le
+        taire rendrait une liste qui a l'air juste et qui ignore la seule
+        contrainte que l'utilisateur a pris la peine d'exprimer. C'est le
+        contraire du choix fait pour les graines de /similar/multi, ou en perdre
+        une sur cinq laisse une reponse encore utile -- et le dit.
+        """
+        if not options.wants_avoid:
+            return None
+        found = None
+        if options.avoid_checksum:
+            found = await service.target_from_checksum(
+                name, searcher, options.avoid_checksum.strip()
+            )
+        if found is None and options.avoid_beatmap_id:
+            found = await service.target_from_beatmap_id(
+                name, searcher, options.avoid_beatmap_id
+            )
+        if found is None:
+            raise HTTPException(
+                404,
+                "The map to avoid is not in this corpus. Only corpus maps can "
+                "be used as a counter-example.",
+            )
+        return found
+
     router = APIRouter(prefix=API_PREFIX, tags=["osu-mapmatcher"])
 
     # -- description -----------------------------------------------------------
@@ -702,8 +837,16 @@ def build_router(service: SearchService) -> APIRouter:
             "groups": list(GROUP_NAMES),
             "variants": service.available(),
             "n_maps": sizes,
+            # Ce qu'un client peut demander a CE serveur-ci. L'index hebergé se
+            # met a jour par `git pull` : entre le moment ou une page nouvelle
+            # est publiee et celui ou le VPS est redeploye, elle tombe sur un
+            # serveur qui ignore /similar/multi. Mieux vaut qu'elle le lise ici
+            # et masque le bouton que d'envoyer une requete qui rend 404.
+            "supports": ["multi", "group_filter", "avoid"],
             "limits": {
                 "k_max": 100,
+                "max_seeds": MAX_SEEDS,
+                "avoid_strength_max": MAX_AVOID_STRENGTH,
                 "max_upload_bytes": config.max_upload,
                 "rate_per_minute": config.rate_per_minute,
                 "file_cost": config.file_cost,
@@ -759,7 +902,8 @@ def build_router(service: SearchService) -> APIRouter:
                 "This map is not in the corpus. Post its .osu to "
                 f"{API_PREFIX}/similar/file instead.",
             )
-        matches = await service.search(name, searcher, target, options)
+        avoid = await resolve_avoid(name, searcher, options)
+        matches = await service.search(name, searcher, target, options, avoid)
         return _reply(
             variant=name,
             target=target,
@@ -770,6 +914,7 @@ def build_router(service: SearchService) -> APIRouter:
             source="corpus",
             warnings=warnings,
             n_maps=int(searcher.index.size),
+            avoid=avoid,
         )
 
     @router.post(
@@ -811,7 +956,8 @@ def build_router(service: SearchService) -> APIRouter:
         in_corpus = source == "corpus" or await service.in_corpus(
             name, searcher, target.checksum
         )
-        matches = await service.search(name, searcher, target, payload)
+        avoid = await resolve_avoid(name, searcher, payload)
+        matches = await service.search(name, searcher, target, payload, avoid)
         return _reply(
             variant=name,
             target=target,
@@ -822,6 +968,103 @@ def build_router(service: SearchService) -> APIRouter:
             source=source,
             warnings=warnings,
             n_maps=int(searcher.index.size),
+            avoid=avoid,
+        )
+
+    @router.post("/similar/multi", summary="Neighbours of several maps at once")
+    async def similar_multi(
+        payload: MultiRequest,
+        _: None = Depends(guard(1.0)),
+    ) -> dict[str, Any]:
+        """
+        Le centroide de plusieurs graines, et ses voisins.
+
+        La reponse a la meme forme que les autres endpoints ; seul `query`
+        change de sens : il decrit l'ensemble des graines, avec la liste dans
+        `query.seeds` et `query.is_centroid` a vrai. Les phrases de
+        `differences` comparent alors a la MOYENNE des choix, pas a une map.
+        """
+        name, searcher, warnings = service.pick(
+            variant=payload.variant, mods=payload.mods, rate=payload.rate
+        )
+
+        wanted = [c.strip() for c in payload.checksums if c and c.strip()]
+        wanted_ids = [i for i in payload.beatmap_ids if i]
+        if not wanted and not wanted_ids:
+            raise HTTPException(400, "Pass at least one checksum or beatmap_id.")
+        if len(wanted) + len(wanted_ids) > MAX_SEEDS:
+            raise HTTPException(
+                400,
+                f"Too many seeds ({len(wanted) + len(wanted_ids)}), "
+                f"the limit is {MAX_SEEDS}.",
+            )
+
+        seeds: list[QueryTarget] = []
+        seen: set[str] = set()
+        missing: list[str] = []
+
+        async def take(found: QueryTarget | None, asked: str) -> None:
+            if found is None:
+                missing.append(asked)
+                return
+            # Deux fois la meme map la ferait peser double dans la moyenne,
+            # c'est-a-dire exactement la ponderation qu'on a choisi de ne pas
+            # faire. Un doublon vient d'un copier-coller, pas d'une intention.
+            if found.checksum in seen:
+                warnings.append(f"{asked} was listed twice, counted once")
+                return
+            seen.add(found.checksum)
+            seeds.append(found)
+
+        for checksum in wanted:
+            await take(
+                await service.target_from_checksum(name, searcher, checksum), checksum
+            )
+        for beatmap_id in wanted_ids:
+            await take(
+                await service.target_from_beatmap_id(name, searcher, beatmap_id),
+                str(beatmap_id),
+            )
+
+        # Une graine perdue sur cinq laisse une reponse qui vaut encore quelque
+        # chose, a condition de le dire. Zero graine resolue, non : il n'y a
+        # rien a repondre, et un centroide du vide n'existe pas.
+        if missing:
+            warnings.append(
+                f"{len(missing)} seed(s) not in this corpus, ignored: "
+                + ", ".join(missing[:5])
+                + (" ..." if len(missing) > 5 else "")
+            )
+        if not seeds:
+            raise HTTPException(
+                404,
+                "None of these maps is in the corpus. Search by checksum or "
+                "beatmap_id of a published map.",
+            )
+
+        target = combine_targets(seeds)
+        low, high = target.star_span
+        if high - low > WIDE_SPAN_STARS:
+            warnings.append(
+                f"seeds span {low:.2f} to {high:.2f} stars; their average is a "
+                "compromise that may resemble none of them"
+            )
+
+        avoid = await resolve_avoid(name, searcher, payload)
+        matches = await service.search(name, searcher, target, payload, avoid)
+        return _reply(
+            variant=name,
+            target=target,
+            matches=matches,
+            options=payload,
+            mods=payload.mods,
+            # un centroide n'est aucune map du corpus, meme si toutes ses
+            # graines en sont
+            in_corpus=False,
+            source="corpus",
+            warnings=warnings,
+            n_maps=int(searcher.index.size),
+            avoid=avoid,
         )
 
     _BINARY_BODY = {
@@ -870,7 +1113,8 @@ def build_router(service: SearchService) -> APIRouter:
             target = searcher.target_from_features(result.features)
             source = "file"
 
-        matches = await service.search(name, searcher, target, options)
+        avoid = await resolve_avoid(name, searcher, options)
+        matches = await service.search(name, searcher, target, options, avoid)
         return _reply(
             variant=name,
             target=target,
@@ -881,6 +1125,7 @@ def build_router(service: SearchService) -> APIRouter:
             source=source,
             warnings=warnings,
             n_maps=int(searcher.index.size),
+            avoid=avoid,
         )
 
     @router.post(

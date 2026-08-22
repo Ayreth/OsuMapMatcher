@@ -37,6 +37,11 @@ three answers so a client can pick by what it is able to install.
 | **2. Features** | a dict of 96 named values | none | Python + `rosu-pp-py` + `numpy` |
 | **3. File** | the raw `.osu`, ~40 KB | ~20 ms | nothing |
 
+A fourth form starts from *several* maps rather than one:
+[`POST /similar/multi`](#post-apiv1similarmulti) takes a list of checksums and
+beatmap ids and searches from their centroid. It is path 1 repeated, so it also
+costs the server nothing.
+
 **Path 1 covers the overwhelming majority of real traffic.** Every ranked and
 loved map is already in the corpus, its vector is already computed, and its
 identity is its MD5 — which tosu hands you for free. Only unsubmitted, edited
@@ -125,8 +130,11 @@ curl -s https://api.example.com/api/v1/meta
   "groups": ["aim", "speed", "rhythm", "spacing", "parameters"],
   "variants": ["nomod", "DT"],
   "n_maps": { "nomod": 151558, "DT": 151329 },
+  "supports": ["multi", "group_filter", "avoid"],
   "limits": {
     "k_max": 100,
+    "max_seeds": 20,
+    "avoid_strength_max": 0.75,
     "max_upload_bytes": 4000000,
     "rate_per_minute": 120,
     "file_cost": 5,
@@ -136,6 +144,12 @@ curl -s https://api.example.com/api/v1/meta
 ```
 
 `feature_names` is the column order for the compact `vector` form.
+
+`supports` lists the optional capabilities this instance has. A hosted instance
+is updated by pulling and rebuilding, so a client can easily be newer than the
+server it is talking to; read this array and hide what the server does not
+offer, rather than discovering it on a 404. An instance that predates the field
+omits it entirely — treat a missing `supports` as "none of them".
 
 ### `GET /api/v1/map/{checksum}`
 
@@ -214,6 +228,54 @@ inside `meta`.
 featurised with are not the ones the corpus was built with, the response says so
 in `warnings` instead of quietly returning biased distances.
 
+### `POST /api/v1/similar/multi`
+
+Neighbours of **several** maps at once: "here are five maps I love, find me
+more". The seeds are averaged into a centroid and the search runs from there.
+
+```bash
+curl -s -X POST https://api.example.com/api/v1/similar/multi \
+  -H "Content-Type: application/json" \
+  -d '{"beatmap_ids": [1000459, 2552165], "k": 10}'
+```
+
+```jsonc
+{
+  "checksums": ["9af49…", "58e10…"],   // corpus maps, by MD5
+  "beatmap_ids": [1000459, 5731234],   // or by id; mix both freely
+  "mods": "", "rate": 1.0, "variant": null,
+  "k": 20, "star_range": 0.5           // plus every search option
+}
+```
+
+Only corpus maps are accepted — there is no file-upload form of this endpoint.
+
+**The star band covers the seeds, not their centre.** With seeds at 4★ and 7★
+the centroid sits at 5.5★, and a `centre ± star_range` band would exclude both
+ends — precisely the maps closest to what was asked for. The band is therefore
+`[min − star_range, max + star_range]`. Measured on the real corpus: 22 234
+candidates for the centred band against 82 662 for the span, and the best match
+improved from distance 1.218 to 1.156. Length works the same way.
+
+**Seeds are not weighted.** Listing a map twice would weight it by accident, so
+duplicates are dropped and reported in `warnings`.
+
+Failure is graded, because losing one seed out of five still leaves a useful
+answer and losing all of them does not:
+
+- a seed that is not in the corpus is **skipped** and named in `warnings`;
+- if *no* seed resolves, the response is **404**;
+- more than `limits.max_seeds` seeds is **400**.
+
+The reply has the same shape as every other search endpoint. Only `query`
+changes meaning: it describes the set rather than a map, with
+`is_centroid: true`, the seed list in `query.seeds`, and no `checksum`.
+
+> **A centroid is a compromise, and it can be one nobody asked for.** Seeds at
+> 3★ and 8★ produce results around 6★ — the average of two things you like is
+> not necessarily something you like. When the seeds span more than 2★ the
+> response says so in `warnings`; show it.
+
 ### `POST /api/v1/similar/file`
 
 The zero-dependency path. Body is the raw `.osu` bytes — **not** a multipart
@@ -279,6 +341,10 @@ query parameters on the GET and file endpoints, and as top-level JSON fields on
 | `max_per_song` | int | 1 | 0–10 | cap per song title; 0 disables |
 | `allow_unranked` | bool | true | | keep heavily-played graveyard/pending maps in the pool |
 | `diverge` | string | — | one group | stay close on everything *except* this group |
+| `group_filter` | string | — | one group | keep only results whose gap comes mostly from this group |
+| `avoid_checksum` | string | — | | counter-example: a corpus map to move away from |
+| `avoid_beatmap_id` | int | — | | the same, named by id |
+| `avoid_strength` | float | 0.3 | 0–0.75 | how hard to move away from it |
 | `weights` | object | all 1.0 | 0–2 each | per-group weighting |
 
 Weights are named on the JSON path (`"weights": {"aim": 1.5}`) and prefixed on
@@ -288,6 +354,51 @@ the query-string path (`w_aim=1.5`). Groups: `aim`, `speed`, `rhythm`,
 `diverge` is the "same difficulty, opposite challenge" mode: results stay near
 the query on every group but the named one, and are then ranked by how *far*
 they are on it.
+
+`group_filter` sorts the answer rather than changing it: it keeps only the
+results whose largest `group_share` is the named group — "show me the ones that
+differ mostly in aim". The filter is applied to the ranking, before the
+per-song de-duplication, so the list fills up instead of shrinking.
+
+### The counter-example
+
+`avoid_*` is `diverge` made concrete: instead of naming an abstract group, you
+point at a map. Results are ranked by
+
+```
+d(x, target)² − avoid_strength · d(x, avoided)²
+```
+
+Two designs were measured. A hard margin — keep only maps closer to the target
+than to the avoided one — was rejected: its severity depends entirely on how far
+apart the two maps happen to be, which the caller does not control. On two real
+queries it kept 33 % of candidates in one case and 6 % in the other.
+
+The penalty is predictable, and provably so: at a fixed strength it is *exactly*
+a search around the extrapolated point `(target − β·avoided) / (1 − β)`. That is
+also why the strength is capped — as β approaches 1 that point runs off the
+manifold. What it costs and what it buys, on a 5.5★ query whose counter-example
+is its own top neighbour:
+
+| `avoid_strength` | mean distance to target | mean distance to avoided | shared with the plain list |
+|---|---|---|---|
+| 0.0 | 1.114 | 1.121 | 10/10 |
+| 0.15 | 1.122 | 1.235 | 7/10 |
+| **0.3** (default) | **1.146** | **1.396** | **6/10** |
+| 0.5 | 1.188 | 1.471 | 5/10 |
+| 0.9 (refused) | 2.585 | 2.966 | 0/10 |
+
+The avoided map is excluded from its own results. This is not cosmetic: it sits
+at distance zero from itself, so it is the one the penalty spares *most* — at
+strength 0.15 it came back fourth.
+
+`distance` and `similarity` in the response are always measured against the
+**target**. The penalised score ranks; it is never displayed, and it can be
+negative.
+
+A counter-example that is not in the corpus is a **404**, unlike a missing seed
+in `/similar/multi`. There is only one of them, so ignoring it would silently
+drop the only constraint the caller bothered to express.
 
 ---
 
@@ -301,10 +412,18 @@ Every search endpoint answers with the same object.
     "checksum": "9af49…", "beatmap_id": 1000459,
     "label": "Neptune - Hollywood [Fort's Style]",
     "stars": 5.91, "bpm": 140.0, "length_s": 114.9,
-    "in_corpus": true, "mods": "DT"
+    "in_corpus": true, "mods": "DT",
+
+    // the same fields whether you asked with one map or ten
+    "is_centroid": false,   // true => `differences` compare to the AVERAGE
+    "n_seeds": 0,           // 0 on the single-map endpoints
+    "star_span": [5.91, 5.91],
+    "seeds": []             // [{checksum, beatmap_id, label, stars, …}, …]
   },
   "variant": "DT",          // corpus actually searched
   "diverge": null,
+  "group_filter": null,
+  "avoid": null,            // or {checksum, beatmap_id, label, strength}
   "count": 10,
   "matches": [ /* … */ ],
   "source": "corpus",       // corpus | features | vector | file
@@ -341,6 +460,16 @@ Each match:
 `similarity` is only a readable rescaling of `distance`; it is strictly
 decreasing, so it never changes an ordering.
 
+**`query.is_centroid` changes what `differences` means.** On a single map the
+sentences compare two real maps. On a centroid they compare a real map to the
+*average of the seeds* — "faster (170 → 195 BPM)" then means 170 is the mean BPM
+of what you asked for, and no map in your list necessarily has it. An interface
+that renders both the same way tells the reader something false.
+
+`avoid` echoes the counter-example as the server **understood** it, not as it
+was asked for: a caller who named it by `beatmap_id` can check which map that
+actually resolved to.
+
 `status` is `dump` for anything that came out of the official ppy dump. That
 covers both ranked and loved maps — the dump does not separate them, so the
 field does not pretend to. Any other value is a map pulled in by playcount from
@@ -360,6 +489,13 @@ different question from the one asked:
   lazer free rates have no corpus. `DT` is 1.5× and nothing else.
 - `features were computed with mods 'HDDT' but the corpus was built with 'DT'` —
   the client featurised with the wrong mods; distances are biased.
+- `2 seed(s) not in this corpus, ignored: …` — the centroid was built from
+  fewer maps than were asked for. The answer is still useful; it is just not
+  the one requested.
+- `… was listed twice, counted once` — a duplicate seed was dropped so it would
+  not weight itself.
+- `seeds span 3.02 to 7.98 stars; their average is a compromise that may
+  resemble none of them` — the honest warning about wide centroids.
 
 Show them, or at least log them.
 
@@ -371,9 +507,9 @@ FastAPI's usual `{"detail": "..."}`.
 
 | Code | Meaning | What to do |
 |---|---|---|
-| 400 | malformed target: vector of the wrong length, missing feature, missing `stars`, unknown diverge group | fix the request; the message names the problem |
+| 400 | malformed target: vector of the wrong length, missing feature, missing `stars`, unknown diverge or group filter, no seed, too many seeds | fix the request; the message names the problem |
 | 401 | token missing or wrong | send `Authorization: Bearer …` |
-| 404 | checksum unknown in this corpus | post the `.osu` to `/similar/file` |
+| 404 | checksum unknown in this corpus; no seed resolved; counter-example unknown | post the `.osu` to `/similar/file`, or drop the unknown map |
 | 409 | `feature_version` mismatch | update the client, or point it at a matching server |
 | 413 | file larger than the server's limit | check `limits.max_upload_bytes` |
 | 415 | multipart upload | resend as a raw body |
