@@ -104,6 +104,9 @@ RANKED_STATUSES = frozenset({DUMP_STATUS, "ranked", "approved", "loved"})
 
 #: annotation par defaut : ce dont on ne sait rien vient du dump
 _NO_MARK: dict[str, Any] = {"status": DUMP_STATUS, "playcount": None}
+#: et quand on dispose de la liste des loved, on sait trancher
+_RANKED_MARK: dict[str, Any] = {"status": "ranked", "playcount": None}
+_LOVED_MARK: dict[str, Any] = {"status": "loved", "playcount": None}
 
 
 DEFAULT_STAR_RANGE = 0.5
@@ -328,6 +331,7 @@ def build(
     *,
     clip: float = 5.0,
     annotations: dict[str, dict[str, Any]] | None = None,
+    loved: frozenset[str] | set[str] | None = None,
 ) -> dict[str, Any]:
     """
     Fabrique scaler + vecteurs + index ANN + SQLite depuis les parquets.
@@ -342,6 +346,9 @@ def build(
     et le playcount, qui ne sont nulle part dans un .osu. La jointure se fait
     sur le checksum, seule cle fiable : certains .osu du graveyard portent un
     `BeatmapID:` qui n'est pas le leur. Ce qui n'y figure pas est du dump.
+
+    `loved` est l'ensemble des md5 loved. Fourni, il permet d'etiqueter le
+    dump en `ranked` / `loved` ; absent, tout le dump reste `dump`.
     """
     import pandas as pd
     from usearch.index import Index
@@ -363,18 +370,31 @@ def build(
     frame = frame.drop_duplicates(subset="checksum", keep="first").reset_index(drop=True)
 
     annotations = annotations or {}
+    loved = loved or frozenset()
     # Les annotations ne s'appliquent qu'aux corpus qui viennent APRES le
     # premier. Le dump est autoritaire sur "cette map est ranked ou loved" :
     # sans ce garde-fou, une map du dump dont le mirror annonce encore le
     # statut graveyard se retrouvait badgee graveyard dans l'interface. Mesure
     # sur le lot reel : 4 maps concernees.
-    marks = [
-        annotations.get(str(checksum), _NO_MARK) if origine > 0 else _NO_MARK
-        for checksum, origine in zip(frame["checksum"], frame["_origine"])
-    ]
+    #
+    # Pour le dump lui-meme, deux cas. Avec une liste de loved, on sait dire
+    # `ranked` ou `loved`. Sans elle, on dit `dump` -- qui ne ment sur rien : le
+    # dump melange les deux sans les distinguer, et ecrire `ranked` partout
+    # serait une affirmation qu'on ne peut pas soutenir.
+    defaut_dump = _NO_MARK if not loved else None
+    marks = []
+    for checksum, origine in zip(frame["checksum"], frame["_origine"]):
+        if origine > 0:
+            marks.append(annotations.get(str(checksum), _NO_MARK))
+        elif defaut_dump is not None:
+            marks.append(defaut_dump)
+        else:
+            marks.append(_LOVED_MARK if str(checksum) in loved else _RANKED_MARK)
+
     statuses = [mark["status"] for mark in marks]
     playcounts = [mark["playcount"] for mark in marks]
     n_unranked = sum(1 for s in statuses if s not in RANKED_STATUSES)
+    n_loved = sum(1 for s in statuses if s == "loved")
     frame = frame.drop(columns="_origine")
 
     raw = frame[list(FEATURE_NAMES)].to_numpy(dtype=np.float64)
@@ -430,6 +450,7 @@ def build(
     report = {
         "n_maps": int(len(frame)),
         "n_unranked": int(n_unranked),
+        "n_loved": int(n_loved),
         "n_sources": len(directories),
         "n_features": len(FEATURE_NAMES),
         "clip": clip,

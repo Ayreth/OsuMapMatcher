@@ -55,6 +55,14 @@ STATUS_CODES: dict[str, int] = {
     "qualified": 3,
 }
 
+#: loved. Pas dans STATUS_CODES : ces maps-la sont deja dans le dump, on ne va
+#: pas les telecharger, seulement recuperer leurs md5 pour les distinguer des
+#: ranked -- distinction que le dump ne fait pas.
+LOVED_CODE = 4
+
+#: ou atterrit la liste des md5 loved, a cote des index
+LOVED_FILE = "loved.json"
+
 #: statuts qui valent la peine par defaut. Le graveyard represente l'immense
 #: majorite du volume ; `pending` rattrape les maps encore vivantes.
 DEFAULT_STATUSES: tuple[str, ...] = ("graveyard", "pending")
@@ -323,6 +331,47 @@ def list_top_sets(
         merged.values(), key=lambda s: int(s.get("play_count") or 0), reverse=True
     )
     return ordered[:n_sets]
+
+
+def list_loved_checksums(
+    *,
+    mirror: Mirror | None = None,
+    delay: float = DEFAULT_DELAY,
+    progress: bool = True,
+) -> set[str]:
+    """
+    Les md5 de toutes les difficultes std **loved**.
+
+    Sert a separer `ranked` de `loved` parmi les maps du dump, qui ne le dit
+    pas. Rien n'est telecharge : ces maps sont deja dans le dump, on ne cherche
+    que leurs checksums pour etiqueter des lignes existantes. Environ 1 300
+    sets, soit quatorze requetes.
+    """
+    mirror = mirror or MIRRORS[DEFAULT_MIRROR]
+    if not mirror.can_rank:
+        raise ValueError(f"{mirror.name} n'a pas de recherche utilisable ici.")
+
+    checksums: set[str] = set()
+    offset = 0
+    while True:
+        url = mirror.search_url.format(
+            mode=MODE_STD, status=LOVED_CODE, amount=PAGE_SIZE, offset=offset
+        )
+        page = _unwrap(json.loads(_get(url).decode("utf-8")))
+        if not page:
+            break
+        for entry in page:
+            for beatmap in entry.get("beatmaps") or []:
+                if _is_std(beatmap) and beatmap.get("checksum"):
+                    checksums.add(str(beatmap["checksum"]).lower())
+        if progress:
+            print(f"  loved  offset {offset:>5} -> {len(page):>3} sets, "
+                  f"{len(checksums)} md5", flush=True)
+        if len(page) < PAGE_SIZE:
+            break
+        offset += PAGE_SIZE
+        time.sleep(delay)
+    return checksums
 
 
 def refs_from_sets(sets: Iterable[dict]) -> list[BeatmapRef]:
@@ -618,6 +667,40 @@ def write_manifest(
     destination = out_dir / MANIFEST_FILE
     destination.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return destination
+
+
+def write_loved(path: Path, checksums: set[str]) -> Path:
+    """Ecrit la liste des md5 loved, avec sa date."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "n": len(checksums),
+                "checksums": sorted(checksums),
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def load_loved(source: Path) -> set[str]:
+    """
+    Relit la liste des md5 loved. Ensemble vide si le fichier n'est pas la.
+
+    L'absence n'est pas une erreur : sans cette liste, les maps du dump gardent
+    le statut `dump`, qui ne ment sur rien -- il dit juste qu'on ne sait pas
+    separer ranked de loved.
+    """
+    path = Path(source)
+    if path.is_dir():
+        path = path / LOVED_FILE
+    if not path.is_file():
+        return set()
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return {str(c).lower() for c in (payload.get("checksums") or [])}
 
 
 def load_annotations(source: Path) -> dict[str, dict[str, Any]]:

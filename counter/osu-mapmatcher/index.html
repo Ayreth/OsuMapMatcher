@@ -117,12 +117,17 @@
   /* ---- collapsible settings ---- */
   .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
   @media (max-width: 900px) { .panels { grid-template-columns: 1fr; } }
-  .tag {
-    display: inline-block; margin-left: 6px; padding: 1px 6px;
-    border-radius: 999px; font-size: 10px; font-weight: 600;
-    letter-spacing: .02em; text-transform: uppercase; vertical-align: 1px;
+  .sicon {
+    display: inline-flex; align-items: center; margin-right: 5px;
+    vertical-align: -1px; flex: none;
   }
-  .tag.unranked { background: #3a2f18; color: #e8b761; border: 1px solid #55431f; }
+  /* le cas normal ne doit pas crier : discret, juste assez pour se reperer */
+  .sicon.ranked    { color: #6d7891; }
+  .sicon.approved  { color: #6d7891; }
+  .sicon.loved     { color: #ff6b9d; }
+  .sicon.graveyard { color: #e8b761; }
+  .sicon.pending   { color: #7cc4e8; }
+  .sicon.wip       { color: #7cc4e8; }
   details.card {
     background: var(--panel); border: 1px solid var(--line);
     border-radius: 12px; overflow: hidden;
@@ -673,16 +678,52 @@ async function askApi(params) {
   });
 }
 
-// Une map non classee ne se telecharge pas comme les autres et n'a pas la
-// meme garantie de stabilite : son auteur peut la reuploader quand il veut.
-// On le dit sur la carte plutot que de laisser la surprise au clic.
+// Le statut se lit d'un coup d'oeil, avant le titre. Des SVG inline plutot que
+// des emoji : le rendu d'un emoji depend de la police installee, et une pierre
+// tombale peut arriver en carre vide chez quelqu'un.
+//
+// `dump` est le cas ou on ne SAIT pas : le dump ppy melange ranked et loved
+// sans les distinguer. Tant que la liste des loved n'a pas ete recuperee, on
+// n'affiche donc rien plutot que d'affirmer un statut au hasard.
+const STATUS_ICON = {
+  ranked: {
+    path: "M8 2.6l1.9 3.9 4.3.6-3.1 3 .7 4.3L8 12.4 4.2 14.4l.7-4.3-3.1-3 4.3-.6z",
+    label: "Ranked",
+  },
+  loved: {
+    path: "M8 14s-5.5-3.4-5.5-7A3 3 0 018 5.2 3 3 0 0113.5 7c0 3.6-5.5 7-5.5 7z",
+    label: "Loved",
+  },
+  graveyard: {
+    path: "M8 1.5a4 4 0 00-4 4V14h8V5.5a4 4 0 00-4-4zM6.6 5.2h2.8M8 4v4.2",
+    label: "Graveyard",
+    stroke: true,
+  },
+  pending: {
+    path: "M8 1.6a6.4 6.4 0 100 12.8A6.4 6.4 0 008 1.6zM8 4.4v3.9l2.6 1.6",
+    label: "Pending",
+    stroke: true,
+  },
+};
+STATUS_ICON.wip = STATUS_ICON.pending;
+STATUS_ICON.approved = STATUS_ICON.ranked;
+
 function statusTag(m) {
-  if (!m.is_unranked) return "";
+  const icon = STATUS_ICON[m.status];
+  if (!icon) return "";              // `dump` : statut inconnu, on se tait
   const plays = m.playcount
     ? ` — ${Intl.NumberFormat().format(m.playcount)} plays`
     : "";
-  return ` <span class="tag unranked" title="Not ranked${plays}. `
-    + `It is in the pool because it is heavily played.">${esc(m.status)}</span>`;
+  const note = m.is_unranked
+    ? `${icon.label}${plays}. Not ranked: in the pool because it is heavily `
+      + `played, and it may not import the usual way.`
+    : `${icon.label}${plays}`;
+  const dessin = icon.stroke
+    ? `<path d="${icon.path}" fill="none" stroke="currentColor" stroke-width="1.4" `
+      + `stroke-linecap="round" stroke-linejoin="round"/>`
+    : `<path d="${icon.path}" fill="currentColor"/>`;
+  return `<span class="sicon ${esc(m.status)}" title="${esc(note)}" aria-label="${esc(icon.label)}">`
+    + `<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">${dessin}</svg></span>`;
 }
 
 function render(data) {
@@ -717,8 +758,8 @@ function render(data) {
           <span class="rank">${m.rank}</span>
         </div>
         <div class="body">
-          <div class="name">${esc(m.artist)} - ${esc(m.title)}</div>
-          <div class="diff">[${esc(m.version)}] <b>· ${esc(m.creator)}</b>${statusTag(m)}</div>
+          <div class="name">${statusTag(m)}${esc(m.artist)} - ${esc(m.title)}</div>
+          <div class="diff">[${esc(m.version)}] <b>· ${esc(m.creator)}</b></div>
           <div class="actions">
             <a class="btn direct" href="${m.url_direct}" title="Import into osu!">
               osu!direct <span>⤓</span></a>

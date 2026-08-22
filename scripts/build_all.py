@@ -27,12 +27,13 @@ from osumapmatcher.corpus import build_corpus  # noqa: E402
 from osumapmatcher.index import VARIANTS, build  # noqa: E402
 from osumapmatcher.paths import (  # noqa: E402
     corpus_root,
+    data_dir,
     describe_dump,
     find_dump,
     index_root,
     unranked_root,
 )
-from osumapmatcher.unranked import load_annotations  # noqa: E402
+from osumapmatcher.unranked import LOVED_FILE, load_annotations, load_loved  # noqa: E402
 
 
 def main() -> int:
@@ -52,6 +53,8 @@ def main() -> int:
                         help="dossier de .osu non classes (defaut : data/unranked_osu_files)")
     parser.add_argument("--no-unranked", dest="use_unranked", action="store_false",
                         help="ignorer les maps non classees meme si elles sont la")
+    parser.add_argument("--loved", type=Path, default=None,
+                        help="liste des md5 loved (defaut : data/loved.json)")
     args = parser.parse_args()
 
     source = args.source or find_dump()
@@ -74,6 +77,15 @@ def main() -> int:
         unranked_dir = None
         print("maps non classees : aucune "
               "(scripts/fetch_unranked.py pour elargir le pool)")
+
+    # sans cette liste, le dump reste etiquete `dump` : ni ranked ni loved,
+    # parce qu'on ne sait pas lequel des deux
+    loved = load_loved(args.loved or (data_dir() / LOVED_FILE))
+    if loved:
+        print(f"maps loved        : {len(loved)} md5 connus")
+    else:
+        print("maps loved        : liste absente, ranked et loved resteront "
+              "confondus (scripts/fetch_loved.py)")
 
     variants = [v.strip() for v in args.variants.split(",") if v.strip()]
     started = time.perf_counter()
@@ -110,9 +122,10 @@ def main() -> int:
             sources.append(extra_dir)
 
         index_dir = index_dir_root / variant
-        stats = build(sources, index_dir, annotations=annotations)
+        stats = build(sources, index_dir, annotations=annotations, loved=loved)
         print(f"index {variant} : {stats['n_maps']} maps "
-              f"(dont {stats['n_unranked']} non classees), "
+              f"(dont {stats['n_unranked']} non classees, "
+              f"{stats['n_loved']} loved), "
               f"{stats['vectors_mb'] + stats['index_mb'] + stats['sqlite_mb']:.0f} Mo"
               f" -> {index_dir}")
         summary.append((variant, stats["n_maps"], report.elapsed_s))

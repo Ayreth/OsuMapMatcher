@@ -794,3 +794,108 @@ def test_une_map_du_dump_n_est_pas_reetiquetee(tmp_path, mini_corpus):
     finally:
         connection.close()
     assert par_statut == {DUMP_STATUS: 16, "graveyard": len(features) - 16}
+
+
+# --- ranked vs loved ----------------------------------------------------------
+
+def test_sans_liste_loved_le_dump_reste_dump(tmp_path, mini_corpus):
+    """
+    Le dump melange ranked et loved sans les distinguer. Tant qu'on n'a pas la
+    liste, ecrire `ranked` partout serait faux pour plusieurs milliers de maps :
+    on dit `dump`, qui n'affirme rien.
+    """
+    pd = pytest.importorskip("pandas")
+    from osumapmatcher.corpus import COLUMNS
+    from osumapmatcher.features import FEATURE_NAMES
+    from osumapmatcher.index import build
+
+    features = [row[1] for row in mini_corpus]
+    directory = tmp_path / "corpus"
+    directory.mkdir()
+    frame = pd.DataFrame(features, columns=COLUMNS)
+    frame[list(FEATURE_NAMES)] = frame[list(FEATURE_NAMES)].astype("float32")
+    frame.to_parquet(directory / "chunk_00000.parquet", index=False)
+
+    report = build(directory, tmp_path / "index")
+    assert report["n_loved"] == 0
+
+    connection = sqlite3.connect(tmp_path / "index" / DB_FILE)
+    try:
+        statuts = {r[0] for r in connection.execute("SELECT DISTINCT status FROM maps")}
+    finally:
+        connection.close()
+    assert statuts == {DUMP_STATUS}
+
+
+def test_la_liste_loved_separe_ranked_et_loved(tmp_path, mini_corpus):
+    pd = pytest.importorskip("pandas")
+    from osumapmatcher.corpus import COLUMNS
+    from osumapmatcher.features import FEATURE_NAMES
+    from osumapmatcher.index import build
+
+    features = [row[1] for row in mini_corpus]
+    directory = tmp_path / "corpus"
+    directory.mkdir()
+    frame = pd.DataFrame(features, columns=COLUMNS)
+    frame[list(FEATURE_NAMES)] = frame[list(FEATURE_NAMES)].astype("float32")
+    frame.to_parquet(directory / "chunk_00000.parquet", index=False)
+
+    loved = {f["checksum"] for f in features[:5]}
+    report = build(directory, tmp_path / "index", loved=loved)
+
+    assert report["n_loved"] == 5
+    assert report["n_unranked"] == 0, "ni ranked ni loved ne sont 'non classes'"
+
+    connection = sqlite3.connect(tmp_path / "index" / DB_FILE)
+    try:
+        connection.row_factory = sqlite3.Row
+        par_statut = {r["status"]: r["n"] for r in connection.execute(
+            "SELECT status, COUNT(*) n FROM maps GROUP BY status")}
+    finally:
+        connection.close()
+    assert par_statut == {"ranked": len(features) - 5, "loved": 5}
+
+
+def test_une_map_non_classee_ne_devient_pas_loved(tmp_path, mini_corpus):
+    """
+    Une map peut apparaitre dans les deux listes (statut perime chez le
+    mirror). Le corpus dont elle vient tranche : venue du pool non classe, elle
+    reste non classee, meme si son md5 traine dans la liste des loved.
+    """
+    pd = pytest.importorskip("pandas")
+    from osumapmatcher.corpus import COLUMNS
+    from osumapmatcher.features import FEATURE_NAMES
+    from osumapmatcher.index import build
+
+    features = [row[1] for row in mini_corpus]
+
+    def _ecrire(directory, rows):
+        directory.mkdir(parents=True, exist_ok=True)
+        frame = pd.DataFrame(rows, columns=COLUMNS)
+        frame[list(FEATURE_NAMES)] = frame[list(FEATURE_NAMES)].astype("float32")
+        frame.to_parquet(directory / "chunk_00000.parquet", index=False)
+
+    _ecrire(tmp_path / "dump", features[:16])
+    _ecrire(tmp_path / "grave", features[16:])
+
+    annotations = {f["checksum"]: {"status": "graveyard", "playcount": 42}
+                   for f in features[16:]}
+    # la liste des loved pretend couvrir TOUT, y compris le pool non classe
+    loved = {f["checksum"] for f in features}
+
+    report = build([tmp_path / "dump", tmp_path / "grave"], tmp_path / "index",
+                   annotations=annotations, loved=loved)
+
+    assert report["n_unranked"] == len(features) - 16
+    assert report["n_loved"] == 16, "seul le dump peut etre loved"
+
+
+def test_le_fichier_loved_fait_un_aller_retour(tmp_path):
+    from osumapmatcher.unranked import LOVED_FILE, load_loved, write_loved
+
+    checksums = {"a" * 32, "b" * 32, "C" * 32}
+    write_loved(tmp_path / LOVED_FILE, checksums)
+    relu = load_loved(tmp_path)
+
+    assert relu == {"a" * 32, "b" * 32, "c" * 32}, "les md5 sont normalises en minuscules"
+    assert load_loved(tmp_path / "absent.json") == set()
