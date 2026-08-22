@@ -131,7 +131,11 @@ class Scaler:
         values = np.atleast_2d(np.asarray(matrix, dtype=np.float64))
         out = (values - self.center) / self.scale
         np.clip(out, -self.clip, self.clip, out=out)
-        return out.astype(np.float32)
+        # ordre C impose : `DataFrame.to_numpy()` rend un tableau colonne-major,
+        # et une ligne d'un tableau colonne-major n'est pas contigue -- usearch
+        # la refuse, et la lecture d'un bloc de lignes va chercher ses octets
+        # aux quatre coins du fichier.
+        return np.ascontiguousarray(out, dtype=np.float32)
 
     def save(self, path: Path) -> None:
         np.savez(
@@ -456,6 +460,44 @@ class Searcher:
         )
         self.db.row_factory = sqlite3.Row
         self.index = Index.restore(str(self.data_dir / INDEX_FILE), view=True)
+        self._filters = self._load_filters()
+
+    # -- colonnes de filtrage --------------------------------------------------
+
+    def _load_filters(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Monte en memoire les trois colonnes qui servent au pre-filtrage.
+
+        Le meme filtre en SQL coute 250 ms sur une bande d'etoiles dense : un
+        index sur `stars` trouve bien les lignes, mais tester la longueur et le
+        beatmapset oblige sqlite a aller lire 30 000 lignes une par une. Les
+        memes conditions en numpy sur trois tableaux de 151 k valeurs prennent
+        moins d'une milliseconde, pour 3,6 Mo de memoire et une lecture au
+        chargement -- et sans toucher aux index deja distribues.
+        """
+        rows = self.db.execute(
+            "SELECT pos, stars, length_s, beatmapset_id FROM maps"
+        ).fetchall()
+        size = max((row["pos"] for row in rows), default=-1) + 1
+        stars = np.zeros(size, dtype=np.float32)
+        lengths = np.zeros(size, dtype=np.float32)
+        sets = np.zeros(size, dtype=np.int64)
+        # `pos` est dense en pratique, mais un trou ne doit pas fabriquer un
+        # candidat fantome a 0 etoile
+        valid = np.zeros(size, dtype=bool)
+        for row in rows:
+            position = row["pos"]
+            stars[position] = row["stars"]
+            lengths[position] = row["length_s"]
+            sets[position] = row["beatmapset_id"]
+            valid[position] = True
+        return stars, lengths, sets, valid
+
+    def _position_of(self, checksum: str) -> int:
+        row = self.db.execute(
+            "SELECT pos FROM maps WHERE checksum = ?", (checksum,)
+        ).fetchone()
+        return int(row["pos"]) if row else -1
 
     # -- resolution de la requete ---------------------------------------------
 
@@ -468,8 +510,11 @@ class Searcher:
         if row is None:
             return None
         return QueryTarget(
-            vector=np.asarray(self.vectors[row["pos"]], dtype=np.float32),
-            raw=np.asarray(self.raw_vectors[row["pos"]], dtype=np.float32),
+            # copie contigue : les vecteurs sont mappes en memoire et les index
+            # bâtis avant ce correctif sont colonne-major, donc une ligne prise
+            # telle quelle n'est pas contigue (usearch la refuse)
+            vector=np.ascontiguousarray(self.vectors[row["pos"]], dtype=np.float32),
+            raw=np.ascontiguousarray(self.raw_vectors[row["pos"]], dtype=np.float32),
             stars=float(row["stars"]),
             length_s=float(row["length_s"]),
             bpm=float(row["bpm"]),
@@ -512,21 +557,21 @@ class Searcher:
         length_ratio: tuple[float, float] | None,
         exclude_same_set: bool,
     ) -> np.ndarray:
-        clauses = ["stars BETWEEN ? AND ?"]
-        params: list[Any] = [target.stars - star_range, target.stars + star_range]
+        stars, lengths, sets, valid = self._filters
+        keep = valid & (np.abs(stars - target.stars) <= star_range)
         if length_ratio and target.length_s > 0:
-            clauses.append("length_s BETWEEN ? AND ?")
-            params += [target.length_s * length_ratio[0], target.length_s * length_ratio[1]]
+            keep &= (lengths >= target.length_s * length_ratio[0]) & (
+                lengths <= target.length_s * length_ratio[1]
+            )
         if exclude_same_set and target.beatmapset_id:
-            clauses.append("beatmapset_id != ?")
-            params.append(target.beatmapset_id)
+            keep &= sets != target.beatmapset_id
         if target.checksum:
-            clauses.append("checksum != ?")
-            params.append(target.checksum)
-
-        query = "SELECT pos FROM maps WHERE " + " AND ".join(clauses)
-        rows = self.db.execute(query, params).fetchall()
-        return np.fromiter((row["pos"] for row in rows), dtype=np.int64, count=len(rows))
+            # la map interrogee ne peut pas etre sa propre recommandation ; une
+            # map live absente du corpus n'a simplement pas de position
+            position = self._position_of(target.checksum)
+            if position >= 0:
+                keep[position] = False
+        return np.flatnonzero(keep).astype(np.int64)
 
     # -- recherche -------------------------------------------------------------
 
@@ -563,7 +608,11 @@ class Searcher:
             # Trop de candidats pour un scoring exact : l'index ANN degrossit,
             # puis on re-score exactement les survivants du filtre.
             wanted = min(k * OVERSAMPLE, int(self.index.size))
-            hits = self.index.search(target.vector, count=wanted)
+            # ceinture et bretelles : la cible peut venir d'un appelant qui a
+            # fabrique son vecteur autrement (l'API distante, par exemple)
+            hits = self.index.search(
+                np.ascontiguousarray(target.vector, dtype=np.float32), count=wanted
+            )
             keys = np.asarray(hits.keys, dtype=np.int64).ravel()
             allowed = np.isin(keys, candidates, assume_unique=False)
             narrowed = keys[allowed]
