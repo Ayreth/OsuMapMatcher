@@ -6,6 +6,96 @@ running than a number would.
 
 ---
 
+## 2026-08-22 (evening) — ask with several maps, or against one
+
+Three questions the engine could not express before. All three are additive:
+the feature version is still `8e824c8319c6`, no index was rebuilt, and a client
+that ignores them sees exactly what it saw yesterday.
+
+### Several maps at once
+
+`POST /api/v1/similar/multi` takes a list of checksums and beatmap ids and
+searches from their centroid — *here are five maps I love, find me more*.
+
+The trap is the star band. With seeds at 4★ and 7★ the centroid sits at 5.5★,
+and the usual `centre ± star_range` band excludes **both ends** — precisely the
+maps closest to what was asked for. The band now covers
+`[min − range, max + range]`. Measured on the real corpus: 22,234 candidates for
+the centred band against 82,662 for the span, and the best match improved from
+distance 1.218 to 1.156. Length is handled the same way.
+
+Seeds are not weighted. A map listed twice would weight itself by accident, so
+duplicates are dropped and named in `warnings`. Every seed's beatmapset is
+excluded, not just one — `exclude_same_set` only ever knew about a single map.
+
+A seed that is not in the corpus is skipped and reported; if none of them
+resolves, the answer is a 404. Losing one seed out of five still leaves a useful
+answer, losing all of them does not.
+
+### Filtering by what actually differs
+
+`group_filter=aim` keeps only the results whose gap comes mostly from that
+group. It costs nothing — `group_share` was already computed for every match.
+
+It had to be applied to the **ranking** rather than to the finished list, or it
+would shrink the list instead of filling it: the same trap as the per-song
+de-duplication, which already takes `k × 8` before cutting. On a 5.5★ query the
+unfiltered top ten breaks down as six `parameters`, two `rhythm`, one `aim` and
+one `speed` — and yet every one of the five groups still returns a full ten.
+
+### A counter-example
+
+`avoid_checksum` / `avoid_beatmap_id` is `diverge` made concrete: instead of
+naming an abstract group, you point at a map. *Like this one, but not like that
+one.* Results are ranked by `d(x, target)² − 0.3 · d(x, avoided)²`.
+
+A hard margin — keep only maps closer to the target than to the avoided one —
+was implemented, measured and thrown away. Its severity depends entirely on how
+far apart the two maps happen to be, which nobody controls: on two real queries
+it kept 33% of the candidates in one case and 6% in the other.
+
+The penalty is predictable, and provably so. At a fixed strength it is *exactly*
+a search around the extrapolated point `(target − β·avoided) / (1 − β)` —
+verified numerically on the first fifty results. That equivalence is also why
+the strength is capped at 0.75: as β approaches 1 that point runs off the
+manifold and the search stops meaning "like this one".
+
+### Measured
+
+On a 5.5★ query whose counter-example is its own top neighbour:
+
+| strength | distance to target | distance to avoided | shared with the plain list |
+|---|---|---|---|
+| 0.0 | 1.114 | 1.121 | 10/10 |
+| 0.15 | 1.122 | 1.235 | 7/10 |
+| **0.3** (default) | **1.146** | **1.396** | **6/10** |
+| 0.5 | 1.188 | 1.471 | 5/10 |
+| 0.9 (refused) | 2.585 | 2.966 | 0/10 |
+
+0.15 did not bite at all on some targets. 0.3 costs 3% of closeness to the
+target and buys 25% of distance from the map you did not want.
+
+The avoided map is now excluded from its own results. That is not cosmetic: it
+sits at distance zero from itself, so it is the one the penalty spares *most* —
+at strength 0.15 it came back fourth.
+
+### Known limitations
+
+- **There is no interface for any of this yet.** It is reachable over HTTP and
+  nowhere else. A page for it is the next piece of work.
+- **The tosu overlay does not get multi-map search, and will not.** It is driven
+  by the map selected in game, has no input field, and a corner of a second
+  screen is the wrong place to assemble a list. It is unchanged by this release.
+- A centroid is a compromise and can be one nobody asked for: seeds at 3★ and
+  8★ return results around 6★. The response says so in `warnings` when the seeds
+  span more than 2★, but it cannot do better than warn.
+- Seeds and counter-examples must be maps **in the corpus**. There is no
+  file-upload form of `/similar/multi`; featurising N files to average them
+  would cost N times a search, and the real use case is maps you already play.
+- Not deployed to `api.ayreth.site` at the time of writing.
+
+---
+
 ## 2026-08-22 (later) — ranked, loved and unranked are told apart
 
 The dump carries ranked and loved maps without ever recording which is which,
