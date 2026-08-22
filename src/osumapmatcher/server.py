@@ -258,6 +258,7 @@ def create_app(
         exclude_same_set: bool = True,
         max_per_song: int = Query(1, ge=0, le=10),
         diverge: str | None = None,
+        allow_unranked: bool = True,
         w_aim: float = Query(1.0, ge=0.0, le=2.0),
         w_speed: float = Query(1.0, ge=0.0, le=2.0),
         w_rhythm: float = Query(1.0, ge=0.0, le=2.0),
@@ -272,6 +273,7 @@ def create_app(
             "exclude_same_set": exclude_same_set,
             "max_per_song": max_per_song,
             "diverge": diverge or None,
+            "allow_unranked": allow_unranked,
             "w_aim": w_aim, "w_speed": w_speed, "w_rhythm": w_rhythm,
             "w_spacing": w_spacing, "w_parameters": w_parameters,
         }
@@ -436,6 +438,7 @@ def _search_local(checksum: str | None, options: dict[str, Any]) -> dict[str, An
                 weights=weights,
                 max_per_song=options["max_per_song"],
                 diverge=options["diverge"],
+                allow_unranked=options.get("allow_unranked", True),
             )
     except (KeyError, ValueError) as exc:
         raise HTTPException(400, str(exc)) from exc

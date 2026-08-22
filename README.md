@@ -224,6 +224,59 @@ About 2 minutes per mod variant on 24 cores, ~1.5 GB on disk for all five.
 It is interruptible: run the same command again and it picks up where it left
 off. `--variants nomod,DT` limits which ones get built.
 
+### Widening the pool with unranked maps
+
+The dump stops at ranked and loved, which leaves out maps like *Jump Training
+#1* (34M plays) or *Harder, Better, Faster, Stronger* (18M) purely because
+nobody pushed them through ranking. `fetch_unranked.py` pulls the most-played
+unranked maps in and merges them into the index:
+
+```bash
+.venv\Scripts\python.exe scripts\fetch_unranked.py --sets 500
+```
+
+```bash
+.venv\Scripts\python.exe scripts\build_all.py
+```
+
+`--dry-run` ranks and counts without downloading anything. 500 sets is about
+3,700 files and ~170 MB; 2,000 sets is about 10,200 files and ~460 MB, roughly
+half an hour. It is interruptible and resumable: a file already on disk whose
+MD5 still matches is not fetched again, so raising `--sets` later only costs the
+difference.
+
+Where the data comes from, and why:
+
+- **The ranking comes from [osu.direct](https://osu.direct)**, which sorts by
+  playcount without an API key or an OAuth token. The official API can do it too
+  but requires OAuth, and the Cheesegull-format mirrors expose no playcount at
+  all, so they cannot rank. `--rank-mirror` switches it.
+- **The files come from three mirrors in parallel**, one thread each
+  (`--mirrors`, default `osu.direct,catboy,hinamizawa`). This is as much about
+  courtesy as speed: at 3 requests per second each, every mirror sees *less*
+  traffic than a single-source run would send it, while the combined rate
+  triples — measured at 3.4 maps/s against 1.06 for one source. Load balances
+  itself, since all threads pull from the same queue. `ppy` is deliberately out
+  of the default pool: it is the origin, the slowest of the four, and the one
+  worth sparing.
+- **Anything that fails is retried on a *different* mirror.** A source that is
+  missing a file, or throttling right then, says nothing about the other two.
+  The first run without this failover lost 159 maps out of 3,775.
+- **Every download is checked against the MD5 the search announced**, and
+  dropped if it does not match. This matters more than it looks: the whole index
+  is keyed on the checksum, which *is* the MD5 of the `.osu`, so a mirror that
+  repackaged files would produce entries the game could never recognise. Checked
+  before building this: osu.ppy.sh, catboy.best and osu.direct return
+  byte-identical files for the same map.
+- **This is a build-time tool, never a runtime one.** If the mirror disappears,
+  an index that is already built keeps working; you only lose the ability to
+  refresh the pool.
+
+The one thing to keep in mind: graveyard maps are not frozen the way ranked maps
+are. A mapper can re-upload at any time, the MD5 changes, and that pool entry
+quietly goes stale. The manifest records the fetch date for exactly that reason
+— re-run the fetch periodically.
+
 ## Running it as a service (optional)
 
 The engine can also run as a plain HTTP API, so a client does not have to
@@ -285,8 +338,12 @@ means reading 30,000 rows one at a time. Typical query now: ~10 ms.
 
 - **osu!standard only.** Taiko, catch and mania maps are skipped (35% of the
   dump).
-- **Ranked and loved only.** The ppy dump does not include graveyard or WIP
-  maps, so those will never be recommended.
+- **Unranked coverage is by playcount, not exhaustive.** The ppy dump holds
+  only ranked and loved maps. Heavily-played graveyard and pending maps can be
+  added on top (see *Widening the pool* below), but a graveyard map nobody
+  plays will still never be recommended. Unranked results are badged in the UI
+  and can be filtered out; whether `osu!direct` imports them is on osu!'s side,
+  not this tool's.
 - **EZ, FL and HT+HR have no dedicated corpus** and fall back to the closest one
   available. Mods that change difficulty numbers without moving objects or the
   clock — HD, FL, NF and friends — are deliberately ignored on *both* sides of

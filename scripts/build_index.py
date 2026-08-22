@@ -17,6 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from osumapmatcher.index import build  # noqa: E402
+from osumapmatcher.unranked import load_annotations  # noqa: E402
 
 
 def main() -> int:
@@ -24,15 +25,20 @@ def main() -> int:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
     parser = argparse.ArgumentParser(description="Construction de l'index (phase 4)")
-    parser.add_argument("--corpus", type=Path, default=Path("data/corpus"))
+    parser.add_argument("--corpus", type=Path, nargs="+", default=[Path("data/corpus")],
+                        help="un ou plusieurs dossiers de tranches parquet")
     parser.add_argument("--out", type=Path, default=Path("data/index"))
     parser.add_argument("--clip", type=float, default=5.0,
                         help="ecretage des valeurs scalees, en unites robustes")
+    parser.add_argument("--manifest", type=Path, default=None,
+                        help="manifeste de fetch_unranked.py, pour statut et plays")
     args = parser.parse_args()
 
+    annotations = load_annotations(args.manifest) if args.manifest else {}
     started = time.perf_counter()
-    report = build(args.corpus, args.out, clip=args.clip)
-    print(f"maps indexees : {report['n_maps']}")
+    report = build(args.corpus, args.out, clip=args.clip, annotations=annotations)
+    print(f"maps indexees : {report['n_maps']} "
+          f"(dont {report['n_unranked']} non classees)")
     print(f"features      : {report['n_features']}")
     print(f"vecteurs      : {report['vectors_mb']} Mo")
     print(f"index ANN     : {report['index_mb']} Mo")

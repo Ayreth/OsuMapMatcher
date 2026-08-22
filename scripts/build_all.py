@@ -25,7 +25,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from osumapmatcher.corpus import build_corpus  # noqa: E402
 from osumapmatcher.index import VARIANTS, build  # noqa: E402
-from osumapmatcher.paths import corpus_root, describe_dump, find_dump, index_root  # noqa: E402
+from osumapmatcher.paths import (  # noqa: E402
+    corpus_root,
+    describe_dump,
+    find_dump,
+    index_root,
+    unranked_root,
+)
+from osumapmatcher.unranked import load_annotations  # noqa: E402
 
 
 def main() -> int:
@@ -41,6 +48,10 @@ def main() -> int:
                         help="liste separee par des virgules, ex: nomod,DT")
     parser.add_argument("--workers", type=int, default=None)
     parser.add_argument("--no-resume", dest="resume", action="store_false")
+    parser.add_argument("--unranked", type=Path, default=None,
+                        help="dossier de .osu non classes (defaut : data/unranked_osu_files)")
+    parser.add_argument("--no-unranked", dest="use_unranked", action="store_false",
+                        help="ignorer les maps non classees meme si elles sont la")
     args = parser.parse_args()
 
     source = args.source or find_dump()
@@ -49,6 +60,20 @@ def main() -> int:
         return 1
     corpus_dir_root = args.corpus_root or corpus_root()
     index_dir_root = args.index_root or index_root()
+
+    # les maps non classees sont optionnelles : sans elles, tout se comporte
+    # exactement comme avant. C'est le dossier qui decide, pas un drapeau a
+    # retenir -- si `fetch_unranked.py` est passe par la, elles entrent.
+    unranked_dir = args.unranked or unranked_root()
+    annotations: dict = {}
+    if args.use_unranked and unranked_dir.is_dir():
+        annotations = load_annotations(unranked_dir)
+    if annotations:
+        print(f"maps non classees : {len(annotations)} depuis {unranked_dir}")
+    else:
+        unranked_dir = None
+        print("maps non classees : aucune "
+              "(scripts/fetch_unranked.py pour elargir le pool)")
 
     variants = [v.strip() for v in args.variants.split(",") if v.strip()]
     started = time.perf_counter()
@@ -69,9 +94,25 @@ def main() -> int:
         print()
         print(report.render())
 
+        # corpus separe pour les maps non classees : elles se rafraichissent a
+        # un autre rythme que le dump, et la reprise par tranches est indexee
+        # par position -- les melanger la casserait a chaque ajout
+        sources = [corpus_dir]
+        if unranked_dir is not None:
+            extra_dir = corpus_dir_root / f"{variant}_unranked"
+            print()
+            extra = build_corpus(
+                unranked_dir, extra_dir,
+                workers=args.workers, resume=args.resume, mods=mods,
+            )
+            print(f"non classees {variant} : {extra.n_kept} maps retenues "
+                  f"sur {extra.n_seen}")
+            sources.append(extra_dir)
+
         index_dir = index_dir_root / variant
-        stats = build(corpus_dir, index_dir)
-        print(f"index {variant} : {stats['n_maps']} maps, "
+        stats = build(sources, index_dir, annotations=annotations)
+        print(f"index {variant} : {stats['n_maps']} maps "
+              f"(dont {stats['n_unranked']} non classees), "
               f"{stats['vectors_mb'] + stats['index_mb'] + stats['sqlite_mb']:.0f} Mo"
               f" -> {index_dir}")
         summary.append((variant, stats["n_maps"], report.elapsed_s))

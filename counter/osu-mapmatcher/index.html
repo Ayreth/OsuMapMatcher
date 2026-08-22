@@ -117,6 +117,12 @@
   /* ---- collapsible settings ---- */
   .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
   @media (max-width: 900px) { .panels { grid-template-columns: 1fr; } }
+  .tag {
+    display: inline-block; margin-left: 6px; padding: 1px 6px;
+    border-radius: 999px; font-size: 10px; font-weight: 600;
+    letter-spacing: .02em; text-transform: uppercase; vertical-align: 1px;
+  }
+  .tag.unranked { background: #3a2f18; color: #e8b761; border: 1px solid #55431f; }
   details.card {
     background: var(--panel); border: 1px solid var(--line);
     border-radius: 12px; overflow: hidden;
@@ -381,6 +387,10 @@
           <input type="checkbox" id="f_song" checked>
           <label for="f_song" title="Keep only the best-matching difficulty per song, so one popular track cannot fill half the list.">One difficulty per song</label>
         </div>
+        <div class="checkline">
+          <input type="checkbox" id="f_unranked" checked>
+          <label for="f_unranked" title="Heavily-played graveyard and pending maps are in the pool too. Uncheck to get only maps from the official dump.">Include unranked maps</label>
+        </div>
       </div>
     </details>
   </div>
@@ -473,6 +483,7 @@ function syncLabels() {
   if ($("f_k").value !== "20") offF.push(`${$("f_k").value} results`);
   if (!$("f_set").checked) offF.push("same set kept");
   if (!$("f_song").checked) offF.push("duplicates kept");
+  if (!$("f_unranked").checked) offF.push("ranked only");
   $("sumF").textContent = offF.length ? offF.join(", ") : "default";
   $("sumF").classList.toggle("on", offF.length > 0);
 }
@@ -500,6 +511,7 @@ for (const [id, apply] of [
     $("f_star").value = 0.5; $("f_lmin").value = 0.5;
     $("f_lmax").value = 2; $("f_k").value = 20;
     $("f_set").checked = true; $("f_song").checked = true;
+    $("f_unranked").checked = true;
   }],
 ]) {
   $(id).addEventListener("click", (event) => {
@@ -591,6 +603,7 @@ async function search() {
     length_max: $("f_lmax").value,
     exclude_same_set: $("f_set").checked,
     max_per_song: $("f_song").checked ? 1 : 0,
+    allow_unranked: $("f_unranked").checked,
   });
   if ($("f_div").value) params.set("diverge", $("f_div").value);
   for (const [key] of GROUPS) params.set(`w_${key}`, $(`w_${key}`).value);
@@ -660,6 +673,18 @@ async function askApi(params) {
   });
 }
 
+// Une map non classee ne se telecharge pas comme les autres et n'a pas la
+// meme garantie de stabilite : son auteur peut la reuploader quand il veut.
+// On le dit sur la carte plutot que de laisser la surprise au clic.
+function statusTag(m) {
+  if (!m.is_unranked) return "";
+  const plays = m.playcount
+    ? ` — ${Intl.NumberFormat().format(m.playcount)} plays`
+    : "";
+  return ` <span class="tag unranked" title="Not ranked${plays}. `
+    + `It is in the pool because it is heavily played.">${esc(m.status)}</span>`;
+}
+
 function render(data) {
   const bits = [`Recommendations — ${data.count}`];
   if (data.diverge) bits.push(`diverging on ${GROUP_LABEL[data.diverge] || data.diverge}`);
@@ -693,7 +718,7 @@ function render(data) {
         </div>
         <div class="body">
           <div class="name">${esc(m.artist)} - ${esc(m.title)}</div>
-          <div class="diff">[${esc(m.version)}] <b>· ${esc(m.creator)}</b></div>
+          <div class="diff">[${esc(m.version)}] <b>· ${esc(m.creator)}</b>${statusTag(m)}</div>
           <div class="actions">
             <a class="btn direct" href="${m.url_direct}" title="Import into osu!">
               osu!direct <span>⤓</span></a>

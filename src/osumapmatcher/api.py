@@ -420,6 +420,9 @@ class SearchOptions(BaseModel):
     exclude_same_set: bool = True
     max_per_song: int = Field(1, ge=0, le=10)
     diverge: str | None = None
+    #: les maps non classees entrent dans le pool par defaut ; un client
+    #: qui ne veut que du telechargeable normalement passe False
+    allow_unranked: bool = True
     weights: Weights = Field(default_factory=Weights)
 
     def search_kwargs(self) -> dict[str, Any]:
@@ -431,6 +434,7 @@ class SearchOptions(BaseModel):
             "weights": self.weights.model_dump(),
             "max_per_song": self.max_per_song,
             "diverge": self.diverge or None,
+            "allow_unranked": self.allow_unranked,
         }
 
 
@@ -622,6 +626,7 @@ def build_router(service: SearchService) -> APIRouter:
         exclude_same_set: bool = True,
         max_per_song: int = Query(1, ge=0, le=10),
         diverge: str | None = None,
+        allow_unranked: bool = True,
         w_aim: float = Query(1.0, ge=0.0, le=2.0),
         w_speed: float = Query(1.0, ge=0.0, le=2.0),
         w_rhythm: float = Query(1.0, ge=0.0, le=2.0),
@@ -636,6 +641,7 @@ def build_router(service: SearchService) -> APIRouter:
             exclude_same_set=exclude_same_set,
             max_per_song=max_per_song,
             diverge=diverge,
+            allow_unranked=allow_unranked,
             weights=Weights(
                 aim=w_aim,
                 speed=w_speed,

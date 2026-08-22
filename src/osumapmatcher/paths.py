@@ -8,8 +8,9 @@ du depot, avec des variables d'environnement pour les cas ou l'utilisateur veut
 poser ses donnees ailleurs (le dump fait pres de 7 Go decompresse, on ne veut
 pas forcer sa place).
 
-    OSUMAPMATCHER_DATA   dossier de donnees (defaut : <racine>/data)
-    OSUMAPMATCHER_DUMP   dossier contenant les .osu du dump ppy
+    OSUMAPMATCHER_DATA      dossier de donnees (defaut : <racine>/data)
+    OSUMAPMATCHER_DUMP      dossier contenant les .osu du dump ppy
+    OSUMAPMATCHER_UNRANKED  dossier des .osu non classes recuperes en ligne
 """
 
 from __future__ import annotations
@@ -38,6 +39,43 @@ def index_root() -> Path:
 
 def corpus_root() -> Path:
     return data_dir() / "corpus"
+
+
+#: nom historique du dossier des maps non classees. A eviter absolument : il
+#: contient "osu_files", donc `find_dump` le prenait pour le dump lui-meme et
+#: construisait le corpus principal dessus. On continue de l'accepter pour ne
+#: pas obliger a deplacer plusieurs centaines de Mo deja telecharges.
+_LEGACY_UNRANKED = "unranked_osu_files"
+
+
+def unranked_root() -> Path:
+    """
+    Ou atterrissent les .osu non classes recuperes par `fetch_unranked.py`.
+
+    Volontairement a cote du dump plutot que dedans : le dump est une archive
+    officielle qu'on reextrait telle quelle, ces fichiers-la se rafraichissent
+    a un autre rythme, et les melanger rendrait impossible de savoir d'ou vient
+    quoi. Le manifeste vit dans ce dossier, avec les fichiers qu'il decrit.
+    """
+    override = os.environ.get("OSUMAPMATCHER_UNRANKED")
+    if override:
+        return Path(override).expanduser()
+    ancien = data_dir() / _LEGACY_UNRANKED
+    if ancien.is_dir():
+        return ancien
+    return data_dir() / "unranked_maps"
+
+
+def is_unranked_dir(directory: Path) -> bool:
+    """
+    Ce dossier est-il un pool non classe plutot que le dump ?
+
+    On teste la presence du manifeste ecrit par `fetch_unranked.py`, pas le nom.
+    Un nom se choisit mal une fois (`unranked_osu_files` contenait `osu_files`,
+    et `find_dump` construisait alors tout le corpus principal sur le mauvais
+    dossier, en silence) ; un manifeste, lui, dit ce que le dossier est.
+    """
+    return (directory / "manifest.json").is_file()
 
 
 def _count_osu(directory: Path) -> int:
@@ -100,6 +138,13 @@ def find_dump(hint: Path | str | None = None) -> Path | None:
     best_count = 0
     for candidate in candidates:
         if not candidate.is_dir():
+            continue
+        # ne jamais confondre le pool non classe avec le dump : les deux sont
+        # des dossiers plats de .osu, mais construire le corpus principal sur
+        # le mauvais passerait inapercu -- le comptage est plafonne, donc a
+        # egalite c'est le premier vu qui gagnait, et `data/` est scanne avant
+        # la racine
+        if is_unranked_dir(candidate):
             continue
         found, count = _descend(candidate)
         if count > best_count:

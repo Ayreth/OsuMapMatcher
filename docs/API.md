@@ -277,6 +277,7 @@ query parameters on the GET and file endpoints, and as top-level JSON fields on
 | `length_max` | float | 2.0 | 1–20 | longest result, same |
 | `exclude_same_set` | bool | true | | drop other difficulties of the same mapset |
 | `max_per_song` | int | 1 | 0–10 | cap per song title; 0 disables |
+| `allow_unranked` | bool | true | | keep heavily-played graveyard/pending maps in the pool |
 | `diverge` | string | — | one group | stay close on everything *except* this group |
 | `weights` | object | all 1.0 | 0–2 each | per-group weighting |
 
@@ -328,6 +329,9 @@ Each match:
   "group_share":    { "aim": 0.33, "speed": 0.09, "…": 0 },
   "differences": ["steadier aim (x4.5 -> x3.5)", "longer (1:54 -> 3:22)"],
   "similarities": ["same AR", "same BPM"],
+  "status": "dump",         // dump | graveyard | pending | wip
+  "is_unranked": false,     // true => not downloadable the usual way
+  "playcount": null,        // known only for unranked maps
   "url_web": "https://osu.ppy.sh/b/5731234",
   "url_direct": "osu://b/5731234",
   "url_cover": "https://assets.ppy.sh/beatmaps/2552165/covers/list@2x.jpg"
@@ -336,6 +340,13 @@ Each match:
 
 `similarity` is only a readable rescaling of `distance`; it is strictly
 decreasing, so it never changes an ordering.
+
+`status` is `dump` for anything that came out of the official ppy dump. That
+covers both ranked and loved maps — the dump does not separate them, so the
+field does not pretend to. Any other value is a map pulled in by playcount from
+`scripts/fetch_unranked.py`, and `is_unranked` is the boolean to branch on.
+An index built before this field existed reports `dump` for everything and
+`null` playcounts, rather than failing.
 
 ### `warnings`
 

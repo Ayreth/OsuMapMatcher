@@ -49,7 +49,7 @@ from .features import (
 __all__ = [
     "VARIANTS", "variant_for_mods", "Scaler", "Searcher", "SearcherSet",
     "Match", "QueryTarget", "build", "explain", "song_key", "normalise_weights",
-    "DEFAULT_STAR_RANGE", "DEFAULT_LENGTH_RATIO",
+    "DEFAULT_STAR_RANGE", "DEFAULT_LENGTH_RATIO", "DUMP_STATUS", "RANKED_STATUSES",
 ]
 
 SCALER_FILE = "scaler.npz"
@@ -91,6 +91,20 @@ MAX_EXPLAIN_SAMES = 2
 EXACT_LIMIT = 30_000
 #: facteur de sur-echantillonnage de l'index ANN, l'index ne sachant pas filtrer
 OVERSAMPLE = 30
+
+#: statut des maps venues du dump ppy. Volontairement `dump` et pas `ranked` :
+#: le dump melange ranked et loved sans les distinguer, et pretendre le
+#: contraire dans une colonne serait un petit mensonge que l'interface
+#: repeterait. Tout ce qui n'est pas `dump` vient de `fetch_unranked.py`.
+DUMP_STATUS = "dump"
+
+#: statuts qu'on ne considere pas comme "non classe", donc telechargeables
+#: normalement depuis le jeu
+RANKED_STATUSES = frozenset({DUMP_STATUS, "ranked", "approved", "loved"})
+
+#: annotation par defaut : ce dont on ne sait rien vient du dump
+_NO_MARK: dict[str, Any] = {"status": DUMP_STATUS, "playcount": None}
+
 
 DEFAULT_STAR_RANGE = 0.5
 DEFAULT_LENGTH_RATIO = (0.5, 2.0)
@@ -166,6 +180,22 @@ class Scaler:
 
 # --- resultat -----------------------------------------------------------------
 
+def _row_get(row: sqlite3.Row, key: str, default: Any) -> Any:
+    """
+    Lit une colonne qui peut ne pas exister.
+
+    Le launcher installe un index prebati telecharge depuis une release : un
+    utilisateur peut tourner avec un code a jour sur un index d'avant l'ajout
+    des colonnes `status` et `playcount`. Planter la-dessus rendrait la mise a
+    jour du code obligatoirement solidaire d'un retelechargement de 165 Mo.
+    """
+    try:
+        value = row[key]
+    except (IndexError, KeyError):
+        return default
+    return default if value is None else value
+
+
 @dataclass
 class Match:
     rank: int
@@ -184,6 +214,12 @@ class Match:
     group_share: dict[str, float] = field(default_factory=dict)
     differences: list[str] = field(default_factory=list)
     similarities: list[str] = field(default_factory=list)
+    #: `dump` (ranked ou loved, le dump ne les separe pas) ou le statut reel
+    #: d'une map recuperee en ligne : graveyard, pending, wip...
+    status: str = "dump"
+    #: nombre de plays, connu seulement pour les maps non classees -- c'est le
+    #: critere qui les a fait entrer dans le pool, donc il merite d'etre montre
+    playcount: int | None = None
 
     @property
     def similarity(self) -> float:
@@ -218,6 +254,17 @@ class Match:
         return f"osu://b/{self.beatmap_id}"
 
     @property
+    def is_unranked(self) -> bool:
+        """
+        Cette map sort-elle du pool non classe ?
+
+        L'interface en a besoin pour la signaler : on ne clique pas sur
+        osu!direct de la meme facon selon qu'on tombe sur une map ranked ou sur
+        du graveyard, et certains voudront les filtrer.
+        """
+        return self.status not in RANKED_STATUSES
+
+    @property
     def label(self) -> str:
         return f"{self.artist} - {self.title} [{self.version}]"
 
@@ -240,6 +287,9 @@ class Match:
             "group_share": {k: round(v, 4) for k, v in self.group_share.items()},
             "differences": self.differences,
             "similarities": self.similarities,
+            "status": self.status,
+            "is_unranked": self.is_unranked,
+            "playcount": self.playcount,
             "url_web": self.url_web,
             "url_direct": self.url_direct,
             "url_cover": self.url_cover,
@@ -262,7 +312,9 @@ CREATE TABLE IF NOT EXISTS maps (
     stars          REAL,
     bpm            REAL,
     length_s       REAL,
-    n_objects      INTEGER
+    n_objects      INTEGER,
+    status         TEXT    NOT NULL DEFAULT 'dump',
+    playcount      INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_maps_stars ON maps(stars);
 CREATE INDEX IF NOT EXISTS idx_maps_set   ON maps(beatmapset_id);
@@ -270,16 +322,60 @@ CREATE INDEX IF NOT EXISTS idx_maps_bid   ON maps(beatmap_id);
 """
 
 
-def build(corpus_dir: Path, data_dir: Path, *, clip: float = 5.0) -> dict[str, Any]:
-    """Fabrique scaler + vecteurs + index ANN + SQLite depuis les parquets."""
+def build(
+    corpus_dir: Path | Sequence[Path],
+    data_dir: Path,
+    *,
+    clip: float = 5.0,
+    annotations: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """
+    Fabrique scaler + vecteurs + index ANN + SQLite depuis les parquets.
+
+    `corpus_dir` accepte plusieurs dossiers : le dump ppy d'un cote, les maps
+    non classees recuperees en ligne de l'autre. Ils restent separes sur disque
+    parce qu'ils se rafraichissent a des rythmes differents, et que la reprise
+    par tranches de `build_corpus` est indexee par position -- les melanger
+    invaliderait la reprise a chaque ajout.
+
+    `annotations` (issu du manifeste de `fetch_unranked.py`) fournit le statut
+    et le playcount, qui ne sont nulle part dans un .osu. La jointure se fait
+    sur le checksum, seule cle fiable : certains .osu du graveyard portent un
+    `BeatmapID:` qui n'est pas le leur. Ce qui n'y figure pas est du dump.
+    """
     import pandas as pd
     from usearch.index import Index
 
     from .corpus import load_corpus
 
     data_dir.mkdir(parents=True, exist_ok=True)
-    frame = load_corpus(corpus_dir)
-    frame = frame.drop_duplicates(subset="checksum").reset_index(drop=True)
+    directories = (
+        [Path(corpus_dir)]
+        if isinstance(corpus_dir, (str, Path))
+        else [Path(d) for d in corpus_dir]
+    )
+    frames = [load_corpus(directory) for directory in directories]
+    for rang, part in enumerate(frames):
+        part["_origine"] = rang
+    frame = frames[0] if len(frames) == 1 else pd.concat(frames, ignore_index=True)
+    # `keep="first"` avec le dump en tete : une map qui serait passee ranked
+    # entre le dump et la recuperation garde sa version officielle
+    frame = frame.drop_duplicates(subset="checksum", keep="first").reset_index(drop=True)
+
+    annotations = annotations or {}
+    # Les annotations ne s'appliquent qu'aux corpus qui viennent APRES le
+    # premier. Le dump est autoritaire sur "cette map est ranked ou loved" :
+    # sans ce garde-fou, une map du dump dont le mirror annonce encore le
+    # statut graveyard se retrouvait badgee graveyard dans l'interface. Mesure
+    # sur le lot reel : 4 maps concernees.
+    marks = [
+        annotations.get(str(checksum), _NO_MARK) if origine > 0 else _NO_MARK
+        for checksum, origine in zip(frame["checksum"], frame["_origine"])
+    ]
+    statuses = [mark["status"] for mark in marks]
+    playcounts = [mark["playcount"] for mark in marks]
+    n_unranked = sum(1 for s in statuses if s not in RANKED_STATUSES)
+    frame = frame.drop(columns="_origine")
 
     raw = frame[list(FEATURE_NAMES)].to_numpy(dtype=np.float64)
     scaler = Scaler.fit(raw, clip=clip)
@@ -308,11 +404,14 @@ def build(corpus_dir: Path, data_dir: Path, *, clip: float = 5.0) -> dict[str, A
             frame["bpm_median"].astype("float64"),
             frame["drain_time_s"].astype("float64"),
             frame["n_objects"].astype("int64"),
+            statuses,
+            playcounts,
         )
         connection.executemany(
             "INSERT INTO maps (pos, checksum, beatmap_id, beatmapset_id, artist,"
-            " title, creator, version, stars, bpm, length_s, n_objects)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            " title, creator, version, stars, bpm, length_s, n_objects,"
+            " status, playcount)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             rows,
         )
         connection.commit()
@@ -330,6 +429,8 @@ def build(corpus_dir: Path, data_dir: Path, *, clip: float = 5.0) -> dict[str, A
 
     report = {
         "n_maps": int(len(frame)),
+        "n_unranked": int(n_unranked),
+        "n_sources": len(directories),
         "n_features": len(FEATURE_NAMES),
         "clip": clip,
         "vectors_mb": round((data_dir / VECTORS_FILE).stat().st_size / 1e6, 1),
@@ -469,13 +570,24 @@ class Searcher:
         )
         self.db.row_factory = sqlite3.Row
         self.index = Index.restore(str(self.data_dir / INDEX_FILE), view=True)
+        # les index d'avant l'ajout des maps non classees n'ont pas la colonne.
+        # Le launcher sert un index prebati depuis une release : quelqu'un peut
+        # tres bien tourner sur un ancien zip avec un code a jour.
+        self.has_status = self._has_column("status")
         self._filters = self._load_filters()
 
     # -- colonnes de filtrage --------------------------------------------------
 
-    def _load_filters(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    def _has_column(self, name: str) -> bool:
+        with self._db_lock:
+            rows = self.db.execute("PRAGMA table_info(maps)").fetchall()
+        return any(row["name"] == name for row in rows)
+
+    def _load_filters(
+        self,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
-        Monte en memoire les trois colonnes qui servent au pre-filtrage.
+        Monte en memoire les colonnes qui servent au pre-filtrage.
 
         Le meme filtre en SQL coute 250 ms sur une bande d'etoiles dense : un
         index sur `stars` trouve bien les lignes, mais tester la longueur et le
@@ -483,11 +595,15 @@ class Searcher:
         memes conditions en numpy sur trois tableaux de 151 k valeurs prennent
         moins d'une milliseconde, pour 3,6 Mo de memoire et une lecture au
         chargement -- et sans toucher aux index deja distribues.
+
+        Le statut suit la meme logique : un booleen par map, 151 ko, teste en
+        meme temps que le reste plutot qu'en SQL.
         """
+        columns = "pos, stars, length_s, beatmapset_id"
+        if self.has_status:
+            columns += ", status"
         with self._db_lock:
-            rows = self.db.execute(
-                "SELECT pos, stars, length_s, beatmapset_id FROM maps"
-            ).fetchall()
+            rows = self.db.execute(f"SELECT {columns} FROM maps").fetchall()
         size = max((row["pos"] for row in rows), default=-1) + 1
         stars = np.zeros(size, dtype=np.float32)
         lengths = np.zeros(size, dtype=np.float32)
@@ -495,13 +611,16 @@ class Searcher:
         # `pos` est dense en pratique, mais un trou ne doit pas fabriquer un
         # candidat fantome a 0 etoile
         valid = np.zeros(size, dtype=bool)
+        unranked = np.zeros(size, dtype=bool)
         for row in rows:
             position = row["pos"]
             stars[position] = row["stars"]
             lengths[position] = row["length_s"]
             sets[position] = row["beatmapset_id"]
             valid[position] = True
-        return stars, lengths, sets, valid
+            if self.has_status:
+                unranked[position] = row["status"] not in RANKED_STATUSES
+        return stars, lengths, sets, valid, unranked
 
     def _position_of(self, checksum: str) -> int:
         with self._db_lock:
@@ -574,9 +693,12 @@ class Searcher:
         star_range: float,
         length_ratio: tuple[float, float] | None,
         exclude_same_set: bool,
+        allow_unranked: bool = True,
     ) -> np.ndarray:
-        stars, lengths, sets, valid = self._filters
+        stars, lengths, sets, valid, unranked = self._filters
         keep = valid & (np.abs(stars - target.stars) <= star_range)
+        if not allow_unranked:
+            keep &= ~unranked
         if length_ratio and target.length_s > 0:
             keep &= (lengths >= target.length_s * length_ratio[0]) & (
                 lengths <= target.length_s * length_ratio[1]
@@ -604,6 +726,7 @@ class Searcher:
         weights: dict[str, float] | None = None,
         max_per_song: int = 1,
         diverge: str | None = None,
+        allow_unranked: bool = True,
     ) -> list[Match]:
         if diverge and diverge not in GROUP_NAMES:
             raise KeyError(f"Unknown diverge group: {diverge}")
@@ -615,6 +738,7 @@ class Searcher:
             star_range=star_range,
             length_ratio=length_ratio,
             exclude_same_set=exclude_same_set,
+            allow_unranked=allow_unranked,
         )
         if candidates.size == 0:
             return []
@@ -711,6 +835,8 @@ class Searcher:
                     },
                     differences=differences,
                     similarities=similarities,
+                    status=_row_get(row, "status", DUMP_STATUS),
+                    playcount=_row_get(row, "playcount", None),
                 )
             )
             if len(matches) >= k:

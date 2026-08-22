@@ -170,6 +170,60 @@ def _iter_tar_members(archive: Path) -> Iterator[bytes]:
             tar.members = []  # sinon tarfile garde tout l'index en RAM
 
 
+def _clear_chunks(out_dir: Path) -> int:
+    """Efface les tranches d'un lot precedent. Renvoie combien de fichiers."""
+    morts = sorted(out_dir.glob("chunk_*.parquet")) + sorted(
+        out_dir.glob("chunk_*.stats.json")
+    )
+    for path in morts:
+        path.unlink(missing_ok=True)
+    return len(morts)
+
+
+def resume_is_valid(out_dir: Path, source: Path, mods: object | None) -> bool:
+    """
+    Les tranches deja presentes decrivent-elles bien CE lot ?
+
+    La reprise se fie a l'existence de `chunk_N.stats.json`, ce qui ne dit rien
+    de ce qu'il y a dedans. Un corpus bati sur un dossier et relance sur un
+    autre reutilisait donc ses vieilles tranches sans un mot, en rapportant
+    leurs statistiques contre le nouveau nombre de fichiers -- d'ou des taux de
+    skip au-dessus de 100 %, seul symptome visible. C'est arrive en vrai : le
+    corpus du dump s'est retrouve construit sur le pool non classe, et le
+    resultat avait l'air normal.
+
+    On compare donc la source et les mods enregistres avant de faire confiance
+    a quoi que ce soit.
+    """
+    manifest = out_dir / "manifest.json"
+    if not manifest.is_file():
+        return True  # rien a contredire
+    try:
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+
+    if str(payload.get("mods", "")) != str(mods or ""):
+        return False
+    if Path(payload.get("source", "")) != Path(source):
+        return False
+
+    # Le manifeste se contredit-il ? Chaque fichier vu est soit garde soit
+    # skippe, donc `n_kept + skips == n_seen`, toujours. Quand une tranche
+    # perimee est reutilisee, ses compteurs a elle sont rapportes contre le
+    # nombre de fichiers du NOUVEAU lot, et l'egalite casse. C'est le meme
+    # signal que les taux de skip au-dessus de 100 % -- sauf qu'ici on le teste
+    # au lieu de se contenter de l'afficher.
+    #
+    # C'est le seul garde-fou qui rattrape le cas ou la source et le nombre de
+    # fichiers sont pourtant corrects : un dossier qui a grossi depuis le
+    # dernier passage, avec une tranche qui ne couvre que l'ancien contenu.
+    n_seen = int(payload.get("n_seen", 0))
+    n_kept = int(payload.get("n_kept", 0))
+    n_skipped = sum(int(v) for v in (payload.get("skips") or {}).values())
+    return n_kept + n_skipped == n_seen
+
+
 def build_corpus(
     source: Path,
     out_dir: Path,
@@ -182,6 +236,16 @@ def build_corpus(
     mods: object | None = None,
 ) -> BuildReport:
     out_dir.mkdir(parents=True, exist_ok=True)
+    if resume and not resume_is_valid(out_dir, source, mods):
+        print(f"!! {out_dir} a ete bati sur une autre source ou d'autres mods.")
+        print("!! Ses tranches sont effacees et tout est refeaturise.")
+        resume = False
+    if not resume:
+        # Ne pas se contenter de les ignorer : `load_corpus` ramasse tous les
+        # `chunk_*.parquet` du dossier. Un lot plus petit que le precedent
+        # laisserait des tranches orphelines derriere lui, et l'index les
+        # avalerait sans que rien ne le signale.
+        _clear_chunks(out_dir)
     workers = workers or max(1, (os.cpu_count() or 2) - 1)
     report = BuildReport()
     started = time.perf_counter()
