@@ -17,7 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from osumapmatcher.index import build  # noqa: E402
-from osumapmatcher.unranked import load_annotations  # noqa: E402
+from osumapmatcher.unranked import load_annotations, load_loved  # noqa: E402
 
 
 def main() -> int:
@@ -32,13 +32,17 @@ def main() -> int:
                         help="ecretage des valeurs scalees, en unites robustes")
     parser.add_argument("--manifest", type=Path, default=None,
                         help="manifeste de fetch_unranked.py, pour statut et plays")
+    parser.add_argument("--loved", type=Path, default=None,
+                        help="liste des md5 loved, pour separer ranked de loved")
     args = parser.parse_args()
 
     annotations = load_annotations(args.manifest) if args.manifest else {}
+    loved = load_loved(args.loved) if args.loved else set()
     started = time.perf_counter()
-    report = build(args.corpus, args.out, clip=args.clip, annotations=annotations)
+    report = build(args.corpus, args.out, clip=args.clip,
+                   annotations=annotations, loved=loved)
     print(f"maps indexees : {report['n_maps']} "
-          f"(dont {report['n_unranked']} non classees)")
+          f"(dont {report['n_unranked']} non classees, {report['n_loved']} loved)")
     print(f"features      : {report['n_features']}")
     print(f"vecteurs      : {report['vectors_mb']} Mo")
     print(f"index ANN     : {report['index_mb']} Mo")
