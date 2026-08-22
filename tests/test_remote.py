@@ -16,9 +16,9 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from osureco import server as server_module
-from osureco.features import FEATURE_VERSION
-from osureco.remote import USER_AGENT, RemoteBackend, RemoteError
+from osumapmatcher import server as server_module
+from osumapmatcher.features import FEATURE_VERSION
+from osumapmatcher.remote import USER_AGENT, RemoteBackend, RemoteError
 
 
 # --- client -------------------------------------------------------------------
@@ -200,7 +200,7 @@ def local_app(mini_index, monkeypatch):
 
 
 def _current(checksum: str):
-    from osureco.tosu import CurrentMap
+    from osumapmatcher.tosu import CurrentMap
 
     return CurrentMap(
         checksum=checksum, beatmap_id=1, beatmapset_id=1, artist="a", title="t",

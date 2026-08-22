@@ -3,7 +3,7 @@
 """
 pack_counter.py - build the tosu counter from the one page there is.
 
-The page in `src/osureco/static/index.html` works under either host: served by
+The page in `src/osumapmatcher/static/index.html` works under either host: served by
 the local Python server, or served by tosu itself. This script produces the
 folder to drop into tosu, so there is no second copy of the interface to keep
 in sync -- only a generated artefact.
@@ -26,10 +26,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from osureco.paths import PROJECT_ROOT  # noqa: E402
+from osumapmatcher.paths import PROJECT_ROOT  # noqa: E402
 
-FOLDER = "osureco-mapmatcher"
-PAGE = PROJECT_ROOT / "src" / "osureco" / "static" / "index.html"
+FOLDER = "osu-mapmatcher"
+PAGE = PROJECT_ROOT / "src" / "osumapmatcher" / "static" / "index.html"
 
 #: decrit le counter pour la bibliotheque tosu. Le counter fonctionne sans,
 #: c'est la fiche de la vitrine, pas une dependance.

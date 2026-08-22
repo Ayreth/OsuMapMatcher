@@ -69,7 +69,7 @@ if errorlevel 1 (
 )
 
 :run
-"%PY%" -m osureco.launcher %*
+"%PY%" -m osumapmatcher.launcher %*
 if errorlevel 1 (
     echo.
     echo osu!MapMatcher stopped with an error.

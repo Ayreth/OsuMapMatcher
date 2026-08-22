@@ -19,8 +19,8 @@ import sqlite3
 import numpy as np
 import pytest
 
-from osureco import index as index_module
-from osureco.index import Searcher
+from osumapmatcher import index as index_module
+from osumapmatcher.index import Searcher
 
 
 @pytest.fixture(scope="module")

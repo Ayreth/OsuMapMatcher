@@ -8,8 +8,8 @@ du depot, avec des variables d'environnement pour les cas ou l'utilisateur veut
 poser ses donnees ailleurs (le dump fait pres de 7 Go decompresse, on ne veut
 pas forcer sa place).
 
-    OSURECO_DATA   dossier de donnees (defaut : <racine>/data)
-    OSURECO_DUMP   dossier contenant les .osu du dump ppy
+    OSUMAPMATCHER_DATA   dossier de donnees (defaut : <racine>/data)
+    OSUMAPMATCHER_DUMP   dossier contenant les .osu du dump ppy
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import itertools
 import os
 from pathlib import Path
 
-#: <racine>/src/osureco/paths.py -> <racine>
+#: <racine>/src/osumapmatcher/paths.py -> <racine>
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 #: nombre max de niveaux imbriques explores en cherchant le dump
@@ -28,7 +28,7 @@ _COUNT_CAP = 5000
 
 
 def data_dir() -> Path:
-    override = os.environ.get("OSURECO_DATA")
+    override = os.environ.get("OSUMAPMATCHER_DATA")
     return Path(override).expanduser() if override else PROJECT_ROOT / "data"
 
 
@@ -75,13 +75,13 @@ def find_dump(hint: Path | str | None = None) -> Path | None:
     """
     Localise le dossier contenant les .osu du dump, ou None.
 
-    Ordre : argument explicite, puis OSURECO_DUMP, puis les emplacements
+    Ordre : argument explicite, puis OSUMAPMATCHER_DUMP, puis les emplacements
     habituels sous le dossier de donnees et la racine du depot.
     """
     candidates: list[Path] = []
     if hint:
         candidates.append(Path(hint).expanduser())
-    env = os.environ.get("OSURECO_DUMP")
+    env = os.environ.get("OSUMAPMATCHER_DUMP")
     if env:
         candidates.append(Path(env).expanduser())
     candidates.append(data_dir() / "osu_files")
@@ -113,6 +113,6 @@ def describe_dump() -> str:
         return (
             "no .osu dump found. Download one from https://data.ppy.sh "
             "(the *_osu_files.tar.bz2 archive), extract it into "
-            f"{data_dir() / 'osu_files'}, or point OSURECO_DUMP at it."
+            f"{data_dir() / 'osu_files'}, or point OSUMAPMATCHER_DUMP at it."
         )
     return f"{found} ({_count_osu(found)}+ .osu files)"

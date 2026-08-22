@@ -41,13 +41,13 @@ from .features import FEATURE_VERSION
 
 log = logging.getLogger(__name__)
 
-#: instance interrogee par defaut. `OSURECO_API_URL` la remplace.
+#: instance interrogee par defaut. `OSUMAPMATCHER_API_URL` la remplace.
 DEFAULT_API_URL = "https://api.ayreth.site"
 
 #: Obligatoire. Derriere Cloudflare, un client qui garde le User-Agent par
 #: defaut de Python se fait renvoyer 403 par la protection anti-bot (mesure :
 #: `Python-urllib/3.12` refuse systematiquement, tout UA explicite passe).
-USER_AGENT = "osureco/0.1 (+https://github.com/Ayreth/OsuMapMatcher)"
+USER_AGENT = "osu-mapmatcher/0.1 (+https://github.com/Ayreth/OsuMapMatcher)"
 
 DEFAULT_TIMEOUT = 10.0
 #: duree de validite de /meta : le corpus d'un serveur ne bouge pas souvent

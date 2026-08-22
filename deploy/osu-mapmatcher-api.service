@@ -1,12 +1,12 @@
-# /etc/systemd/system/osureco-api.service
+# /etc/systemd/system/osu-mapmatcher-api.service
 #
-#   sudo useradd --system --home /var/lib/osureco --create-home osureco
-#   sudo git clone https://github.com/Ayreth/OsuMapMatcher /opt/osureco
-#   sudo python3 -m venv /opt/osureco/.venv
-#   sudo /opt/osureco/.venv/bin/pip install -e "/opt/osureco[api]"
-#   sudo -u osureco OSURECO_DATA=/var/lib/osureco \
-#        /opt/osureco/.venv/bin/python /opt/osureco/scripts/fetch_index.py
-#   sudo systemctl enable --now osureco-api
+#   sudo useradd --system --home /var/lib/osu-mapmatcher --create-home osu-mapmatcher
+#   sudo git clone https://github.com/Ayreth/OsuMapMatcher /opt/osu-mapmatcher
+#   sudo python3 -m venv /opt/osu-mapmatcher/.venv
+#   sudo /opt/osu-mapmatcher/.venv/bin/pip install -e "/opt/osu-mapmatcher[api]"
+#   sudo -u osu-mapmatcher OSUMAPMATCHER_DATA=/var/lib/osu-mapmatcher \
+#        /opt/osu-mapmatcher/.venv/bin/python /opt/osu-mapmatcher/scripts/fetch_index.py
+#   sudo systemctl enable --now osu-mapmatcher-api
 
 [Unit]
 Description=osu!MapMatcher API
@@ -16,17 +16,17 @@ Wants=network-online.target
 
 [Service]
 Type=exec
-User=osureco
-Group=osureco
-WorkingDirectory=/opt/osureco
-Environment=OSURECO_DATA=/var/lib/osureco
+User=osu-mapmatcher
+Group=osu-mapmatcher
+WorkingDirectory=/opt/osu-mapmatcher
+Environment=OSUMAPMATCHER_DATA=/var/lib/osu-mapmatcher
 Environment=OSURECO_API_VARIANTS=nomod
 Environment=OSURECO_API_CORS=*
 Environment=OSURECO_API_RATE=120
 Environment=OSURECO_API_TRUST_PROXY=1
 # secrets et surcharges locales, absence toleree (le tiret)
-EnvironmentFile=-/etc/osureco/api.env
-ExecStart=/opt/osureco/.venv/bin/uvicorn osureco.api:app \
+EnvironmentFile=-/etc/osu-mapmatcher/api.env
+ExecStart=/opt/osu-mapmatcher/.venv/bin/uvicorn osumapmatcher.api:app \
           --host 127.0.0.1 --port 8080 --workers 2
 Restart=on-failure
 RestartSec=5s
@@ -44,7 +44,7 @@ RestrictAddressFamilies=AF_INET AF_INET6
 RestrictNamespaces=true
 LockPersonality=true
 MemoryDenyWriteExecute=false
-ReadWritePaths=/var/lib/osureco
+ReadWritePaths=/var/lib/osu-mapmatcher
 
 [Install]
 WantedBy=multi-user.target

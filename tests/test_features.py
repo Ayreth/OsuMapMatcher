@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from osureco.features import (
+from osumapmatcher.features import (
     FEATURE_GROUPS,
     FEATURE_NAMES,
     FEATURE_SPEC,
@@ -28,7 +28,7 @@ from osureco.features import (
     featurize_detailed,
 )
 
-from osureco.paths import find_dump
+from osumapmatcher.paths import find_dump
 
 #: les tests sur le vrai dump sont sautes si aucun dump n'est installe
 DUMP = find_dump()
@@ -254,7 +254,7 @@ def test_mods_parse():
 
 
 def test_variante_de_corpus_pour_des_mods():
-    from osureco.features import VARIANTS, variant_for_mods
+    from osumapmatcher.features import VARIANTS, variant_for_mods
 
     assert variant_for_mods(None) == "nomod"
     assert variant_for_mods("") == "nomod"

@@ -13,7 +13,7 @@ api.exemple.com {
 	}
 
 	# Caddy pose X-Forwarded-For tout seul : cote API, mettre
-	# OSURECO_API_TRUST_PROXY=1, sinon le quota compte le proxy comme un
+	# OSUMAPMATCHER_API_TRUST_PROXY=1, sinon le quota compte le proxy comme un
 	# unique client et tout le monde partage le meme seau.
 	reverse_proxy 127.0.0.1:8080 {
 		health_uri /health

@@ -23,9 +23,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from osureco.corpus import build_corpus  # noqa: E402
-from osureco.index import VARIANTS, build  # noqa: E402
-from osureco.paths import corpus_root, describe_dump, find_dump, index_root  # noqa: E402
+from osumapmatcher.corpus import build_corpus  # noqa: E402
+from osumapmatcher.index import VARIANTS, build  # noqa: E402
+from osumapmatcher.paths import corpus_root, describe_dump, find_dump, index_root  # noqa: E402
 
 
 def main() -> int:

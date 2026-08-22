@@ -114,14 +114,14 @@ def create_app(
     mode: str | None = None,
 ) -> FastAPI:
     index_dir = Path(index_dir) if index_dir else index_root()
-    # une chaine vide desactive le distant pour de bon (`OSURECO_API_URL=`),
+    # une chaine vide desactive le distant pour de bon (`OSUMAPMATCHER_API_URL=`),
     # alors que l'absence de valeur laisse le defaut : les deux doivent se
     # distinguer, sinon on ne peut pas dire "jamais de reseau"
     if api_url is not None:
         resolved_url = api_url.strip()
     else:
-        resolved_url = os.environ.get("OSURECO_API_URL", DEFAULT_API_URL).strip()
-    resolved_mode = (mode or os.environ.get("OSURECO_MODE") or "remote").strip().lower()
+        resolved_url = os.environ.get("OSUMAPMATCHER_API_URL", DEFAULT_API_URL).strip()
+    resolved_mode = (mode or os.environ.get("OSUMAPMATCHER_MODE") or "remote").strip().lower()
     if resolved_mode not in MODES:
         resolved_mode = "remote"
 
@@ -146,7 +146,7 @@ def create_app(
         if not found and not state.has_remote:
             raise RuntimeError(
                 f"No index in {index_dir} and no API configured. Run start.bat, "
-                "build an index with scripts/build_all.py, or set OSURECO_API_URL."
+                "build an index with scripts/build_all.py, or set OSUMAPMATCHER_API_URL."
             )
         if resolved_mode == "local" and not found:
             if state.has_remote:
@@ -174,7 +174,7 @@ def create_app(
             if state.searchers:
                 state.searchers.close()
 
-    app = FastAPI(title="osureco", lifespan=lifespan)
+    app = FastAPI(title="osu!MapMatcher", lifespan=lifespan)
 
     # Le serveur local monte le MEME routeur que l'API hebergee (api.py), sans
     # quota ni jeton : un seul protocole a maintenir, et la page peut taper
@@ -237,7 +237,7 @@ def create_app(
                 "scripts/fetch_index.py, to search locally.",
             )
         if wanted == "remote" and not state.has_remote:
-            raise HTTPException(409, "No API configured (OSURECO_API_URL is empty).")
+            raise HTTPException(409, "No API configured (OSUMAPMATCHER_API_URL is empty).")
 
         state.wanted = wanted
         if wanted == "remote" and state.remote is not None:
@@ -535,7 +535,7 @@ def main() -> int:
 
     import uvicorn
 
-    parser = argparse.ArgumentParser(description="Serveur local osureco")
+    parser = argparse.ArgumentParser(description="Serveur local osu!MapMatcher")
     parser.add_argument("--index", type=Path, default=None)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)

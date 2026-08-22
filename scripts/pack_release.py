@@ -20,8 +20,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from osureco.launcher import REQUIRED  # noqa: E402
-from osureco.paths import data_dir, index_root  # noqa: E402
+from osumapmatcher.launcher import REQUIRED  # noqa: E402
+from osumapmatcher.paths import data_dir, index_root  # noqa: E402
 
 
 def main() -> int:
@@ -39,7 +39,7 @@ def main() -> int:
         print(f"{source} is not a complete index, missing: {', '.join(missing)}")
         return 1
 
-    out = args.out or (data_dir() / "release" / f"osureco-index-{args.variant}.zip")
+    out = args.out or (data_dir() / "release" / f"osu-mapmatcher-index-{args.variant}.zip")
     out.parent.mkdir(parents=True, exist_ok=True)
 
     files = sorted(p for p in source.iterdir() if p.is_file())
@@ -59,7 +59,7 @@ def main() -> int:
           f"  in {time.perf_counter() - started:.0f} s")
     print()
     print("Upload it as a release asset named exactly:")
-    print(f"  osureco-index-{args.variant}.zip")
+    print(f"  osu-mapmatcher-index-{args.variant}.zip")
     return 0
 
 

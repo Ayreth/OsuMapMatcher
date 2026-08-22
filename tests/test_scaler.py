@@ -13,8 +13,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from osureco.features import FEATURE_NAMES, GROUP_NAMES
-from osureco.index import Scaler, _weight_vector, normalise_weights
+from osumapmatcher.features import FEATURE_NAMES, GROUP_NAMES
+from osumapmatcher.index import Scaler, _weight_vector, normalise_weights
 
 
 @pytest.fixture
@@ -91,7 +91,7 @@ def test_poids_par_defaut_neutres():
 
 
 def test_poids_appliques_aux_bonnes_colonnes():
-    from osureco.features import FEATURE_GROUPS
+    from osumapmatcher.features import FEATURE_GROUPS
 
     vector = _weight_vector(normalise_weights({"aim": 2.0, "parameters": 0.0}))
     for i, name in enumerate(FEATURE_NAMES):
@@ -113,8 +113,8 @@ def test_tous_les_poids_a_zero_rejetes():
 # --- explications -------------------------------------------------------------
 
 def test_explain_nomme_les_ecarts_et_les_ressemblances():
-    from osureco.features import FEATURE_NAMES as NAMES
-    from osureco.index import explain
+    from osumapmatcher.features import FEATURE_NAMES as NAMES
+    from osumapmatcher.index import explain
 
     position = {name: i for i, name in enumerate(NAMES)}
     query_scaled = np.zeros(len(NAMES), dtype=np.float32)
@@ -137,8 +137,8 @@ def test_explain_nomme_les_ecarts_et_les_ressemblances():
 
 
 def test_explain_ne_dit_rien_sur_deux_maps_identiques():
-    from osureco.features import FEATURE_NAMES as NAMES
-    from osureco.index import explain
+    from osumapmatcher.features import FEATURE_NAMES as NAMES
+    from osumapmatcher.index import explain
 
     vector = np.zeros(len(NAMES), dtype=np.float32)
     differences, similarities = explain(vector, vector, vector, vector)
@@ -147,7 +147,7 @@ def test_explain_ne_dit_rien_sur_deux_maps_identiques():
 
 
 def test_song_key_ignore_casse_espaces_et_artiste():
-    from osureco.index import song_key
+    from osumapmatcher.index import song_key
 
     assert song_key("Camellia", "Routing") == song_key("Camellia", "  ROUTING ")
     # meme chanson, champ artiste different : doit se regrouper

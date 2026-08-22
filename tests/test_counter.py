@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import pack_counter  # noqa: E402
 
-PAGE = ROOT / "src" / "osureco" / "static" / "index.html"
+PAGE = ROOT / "src" / "osumapmatcher" / "static" / "index.html"
 SHIPPED = ROOT / "counter" / pack_counter.FOLDER
 
 

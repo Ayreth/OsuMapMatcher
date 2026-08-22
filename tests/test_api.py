@@ -17,8 +17,8 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from osureco.api import ApiConfig, create_api
-from osureco.features import FEATURE_NAMES, FEATURE_VERSION
+from osumapmatcher.api import ApiConfig, create_api
+from osumapmatcher.features import FEATURE_NAMES, FEATURE_VERSION
 
 
 @pytest.fixture

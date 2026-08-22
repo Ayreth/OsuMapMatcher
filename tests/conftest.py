@@ -26,7 +26,7 @@ def _mini_rows() -> list[tuple[bytes, dict]]:
     # tests de features -- une seule definition du generateur de .osu
     from test_features import make_osu
 
-    from osureco.features import featurize
+    from osumapmatcher.features import featurize
 
     rows: list[tuple[bytes, dict]] = []
     for i in range(MINI_CORPUS):
@@ -46,8 +46,8 @@ def _write_variant(directory: Path, rows: list[tuple[bytes, dict]]) -> None:
     import numpy as np
     from usearch.index import Index
 
-    from osureco.features import FEATURE_NAMES
-    from osureco.index import (
+    from osumapmatcher.features import FEATURE_NAMES
+    from osumapmatcher.index import (
         DB_FILE,
         INDEX_FILE,
         RAW_FILE,

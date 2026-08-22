@@ -26,7 +26,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from osureco.features import (  # noqa: E402
+from osumapmatcher.features import (  # noqa: E402
     FEATURE_GROUPS,
     FEATURE_NAMES,
     GROUP_NAMES,
@@ -35,7 +35,7 @@ from osureco.features import (  # noqa: E402
     featurize_detailed,
 )
 
-from osureco.paths import data_dir, describe_dump, find_dump  # noqa: E402
+from osumapmatcher.paths import data_dir, describe_dump, find_dump  # noqa: E402
 
 
 def main() -> int:

@@ -30,19 +30,19 @@ refuse (409) au lieu d'etre servi.
 
 Variables d'environnement :
 
-    OSURECO_DATA            dossier de donnees (voir paths.py)
-    OSURECO_API_VARIANTS    variantes servies, ex. "nomod,DT" (defaut : toutes)
-    OSURECO_API_CORS        origines autorisees, ex. "https://exemple.com"
+    OSUMAPMATCHER_DATA            dossier de donnees (voir paths.py)
+    OSUMAPMATCHER_API_VARIANTS    variantes servies, ex. "nomod,DT" (defaut : toutes)
+    OSUMAPMATCHER_API_CORS        origines autorisees, ex. "https://exemple.com"
                             (defaut "*", l'API est publique et en lecture seule)
-    OSURECO_API_TOKEN       si non vide, exige Authorization: Bearer <jeton>
-    OSURECO_API_RATE        requetes par minute et par IP (defaut 120, 0 = off)
-    OSURECO_API_BURST       taille du seau, en requetes (defaut 60)
-    OSURECO_API_FILE_COST   cout d'un upload en jetons (defaut 5)
-    OSURECO_API_MAX_UPLOAD  taille max d'un .osu en octets (defaut 4000000)
-    OSURECO_API_CONCURRENCY travaux CPU simultanes (defaut : nb de coeurs)
-    OSURECO_API_TRUST_PROXY 1 si un reverse proxy pose X-Forwarded-For
-    OSURECO_API_CACHE       featurisations gardees en cache (defaut 256)
-    OSURECO_API_DOCS        0 pour masquer /docs et /openapi.json
+    OSUMAPMATCHER_API_TOKEN       si non vide, exige Authorization: Bearer <jeton>
+    OSUMAPMATCHER_API_RATE        requetes par minute et par IP (defaut 120, 0 = off)
+    OSUMAPMATCHER_API_BURST       taille du seau, en requetes (defaut 60)
+    OSUMAPMATCHER_API_FILE_COST   cout d'un upload en jetons (defaut 5)
+    OSUMAPMATCHER_API_MAX_UPLOAD  taille max d'un .osu en octets (defaut 4000000)
+    OSUMAPMATCHER_API_CONCURRENCY travaux CPU simultanes (defaut : nb de coeurs)
+    OSUMAPMATCHER_API_TRUST_PROXY 1 si un reverse proxy pose X-Forwarded-For
+    OSUMAPMATCHER_API_CACHE       featurisations gardees en cache (defaut 256)
+    OSUMAPMATCHER_API_DOCS        0 pour masquer /docs et /openapi.json
 """
 
 from __future__ import annotations
@@ -128,17 +128,17 @@ class ApiConfig:
     def from_env(cls) -> "ApiConfig":
         """Reglages d'un deploiement expose : limites actives par defaut."""
         return cls(
-            variants=_env_list("OSURECO_API_VARIANTS"),
-            cors_origins=_env_list("OSURECO_API_CORS") or ("*",),
-            token=_env_str("OSURECO_API_TOKEN"),
-            rate_per_minute=_env_num("OSURECO_API_RATE", 120.0),
-            burst=_env_num("OSURECO_API_BURST", 60.0),
-            file_cost=_env_num("OSURECO_API_FILE_COST", 5.0),
-            max_upload=int(_env_num("OSURECO_API_MAX_UPLOAD", 4_000_000)),
-            concurrency=int(_env_num("OSURECO_API_CONCURRENCY", 0)),
-            trust_proxy=_env_bool("OSURECO_API_TRUST_PROXY", False),
-            cache_size=int(_env_num("OSURECO_API_CACHE", 256)),
-            docs=_env_bool("OSURECO_API_DOCS", True),
+            variants=_env_list("OSUMAPMATCHER_API_VARIANTS"),
+            cors_origins=_env_list("OSUMAPMATCHER_API_CORS") or ("*",),
+            token=_env_str("OSUMAPMATCHER_API_TOKEN"),
+            rate_per_minute=_env_num("OSUMAPMATCHER_API_RATE", 120.0),
+            burst=_env_num("OSUMAPMATCHER_API_BURST", 60.0),
+            file_cost=_env_num("OSUMAPMATCHER_API_FILE_COST", 5.0),
+            max_upload=int(_env_num("OSUMAPMATCHER_API_MAX_UPLOAD", 4_000_000)),
+            concurrency=int(_env_num("OSUMAPMATCHER_API_CONCURRENCY", 0)),
+            trust_proxy=_env_bool("OSUMAPMATCHER_API_TRUST_PROXY", False),
+            cache_size=int(_env_num("OSUMAPMATCHER_API_CACHE", 256)),
+            docs=_env_bool("OSUMAPMATCHER_API_DOCS", True),
         )
 
     @classmethod
@@ -672,7 +672,7 @@ def build_router(service: SearchService) -> APIRouter:
             raise HTTPException(400, "Empty body: post the .osu file bytes.")
         return raw
 
-    router = APIRouter(prefix=API_PREFIX, tags=["osureco"])
+    router = APIRouter(prefix=API_PREFIX, tags=["osu-mapmatcher"])
 
     # -- description -----------------------------------------------------------
 
@@ -1012,7 +1012,7 @@ def create_api(
     return app
 
 
-#: cible d'un `uvicorn osureco.api:app --workers 4`
+#: cible d'un `uvicorn osumapmatcher.api:app --workers 4`
 app = create_api()
 
 
@@ -1041,7 +1041,7 @@ def main(argv: list[str] | None = None) -> int:
         datefmt="%H:%M:%S",
     )
     if args.variants:
-        os.environ["OSURECO_API_VARIANTS"] = args.variants
+        os.environ["OSUMAPMATCHER_API_VARIANTS"] = args.variants
     if args.fetch:
         from .launcher import ensure_index
 
@@ -1061,9 +1061,9 @@ def main(argv: list[str] | None = None) -> int:
         # uvicorn --workers a besoin d'une chaine d'import : la config repasse
         # alors par l'environnement, pas par les arguments
         if args.index:
-            os.environ["OSURECO_DATA"] = str(Path(args.index).parent)
+            os.environ["OSUMAPMATCHER_DATA"] = str(Path(args.index).parent)
         uvicorn.run(
-            "osureco.api:app",
+            "osumapmatcher.api:app",
             host=args.host,
             port=args.port,
             workers=args.workers,

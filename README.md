@@ -129,16 +129,16 @@ To get a local index, run `start.bat --mode local`; the launcher downloads the
 prebuilt NoMod one from this repository's
 [latest release](https://github.com/Ayreth/OsuMapMatcher/releases/latest) (164
 MB). If you cloned a fork, it reads your own git remote instead, so your fork
-serves your own index with no code change. `OSURECO_INDEX_URL` overrides both.
+serves your own index with no code change. `OSUMAPMATCHER_INDEX_URL` overrides both.
 
 To point the tool at a different instance, or at none at all:
 
 ```bash
-start.bat --api https://osureco.example.com    # someone else's server
+start.bat --api https://mapmatcher.example.com    # someone else's server
 start.bat --api ""                             # never touch the network
 ```
 
-`OSURECO_API_URL` and `OSURECO_MODE` do the same thing through the environment.
+`OSUMAPMATCHER_API_URL` and `OSUMAPMATCHER_MODE` do the same thing through the environment.
 
 ## Use it as a tosu counter
 
@@ -146,8 +146,8 @@ The same interface, served by tosu itself. No Python, no `start.bat`, no index:
 the page talks to tosu's websocket for the current map and to the hosted API for
 the search.
 
-1. Copy `counter/osureco-mapmatcher/` into tosu's `static/` folder.
-2. Open `http://127.0.0.1:24050/osureco-mapmatcher/`, or pick it in tosu's
+1. Copy `counter/osu-mapmatcher/` into tosu's `static/` folder.
+2. Open `http://127.0.0.1:24050/osu-mapmatcher/`, or pick it in tosu's
    dashboard.
 
 That is the whole installation.
@@ -177,7 +177,7 @@ sync (a test fails if the shipped counter no longer matches the page).
 ```bash
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -e ".[corpus,index,server]"
-.venv\Scripts\python.exe -m osureco.launcher
+.venv\Scripts\python.exe -m osumapmatcher.launcher
 ```
 
 Useful flags: `--port 8080`, `--no-browser`, `--mode local`, `--api URL`,
@@ -191,7 +191,7 @@ the raw beatmap files:
 
 1. Download a `*_osu_files.tar.bz2` archive from
    [data.ppy.sh](https://data.ppy.sh) (a few GB).
-2. Extract it into `data/osu_files/`, or point `OSURECO_DUMP` at wherever you
+2. Extract it into `data/osu_files/`, or point `OSUMAPMATCHER_DUMP` at wherever you
    put it. The archive nests several folders of the same name; the tool finds
    the right level on its own.
 3. Build:
@@ -213,7 +213,7 @@ page and cannot host a backend.
 
 ```bash
 pip install -e ".[api]"
-python -m osureco.api --host 0.0.0.0 --port 8080 --fetch
+python -m osumapmatcher.api --host 0.0.0.0 --port 8080 --fetch
 ```
 
 A client can ask in three ways: by checksum (the map is already in the corpus,

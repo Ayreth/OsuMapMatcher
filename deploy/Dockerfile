@@ -10,8 +10,8 @@
 # The index is deliberately NOT baked in: ~290 MB per mod variant, on a
 # different release schedule from the code. Mount /data.
 #
-#   docker build -f deploy/Dockerfile -t osureco-api .
-#   docker run -p 8080:8080 -v osureco-index:/data osureco-api
+#   docker build -f deploy/Dockerfile -t osu-mapmatcher-api .
+#   docker run -p 8080:8080 -v osu-mapmatcher-index:/data osu-mapmatcher-api
 
 FROM python:3.12-slim AS base
 
@@ -19,23 +19,23 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    OSURECO_DATA=/data
+    OSUMAPMATCHER_DATA=/data
 
 WORKDIR /app
 COPY pyproject.toml ./
 COPY src ./src
 COPY scripts ./scripts
 
-RUN useradd --system --create-home --uid 10001 osureco \
+RUN useradd --system --create-home --uid 10001 mapmatcher \
     && mkdir -p /data \
-    && chown -R osureco:osureco /data
+    && chown -R mapmatcher:mapmatcher /data
 
 
 # --- builder : fabrique un index, ne sert rien --------------------------------
 
 FROM base AS builder
 RUN pip install --no-cache-dir ".[api,corpus,index]"
-USER osureco
+USER mapmatcher
 # a lancer explicitement, par variante :
 #   docker compose --profile setup run --rm builder \
 #     python scripts/build_index.py --corpus /data/corpus/DT --out /data/index/DT
@@ -46,7 +46,7 @@ CMD ["python", "scripts/build_all.py", "--help"]
 
 FROM base AS runtime
 RUN pip install --no-cache-dir ".[api]"
-USER osureco
+USER mapmatcher
 VOLUME ["/data"]
 EXPOSE 8080
 
@@ -58,4 +58,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
 
 # aucun acces reseau sortant au demarrage : recuperer un index est une action
 # explicite (`--profile setup run --rm fetch`), pas un effet de bord du boot
-CMD ["python", "-m", "osureco.api", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["python", "-m", "osumapmatcher.api", "--host", "0.0.0.0", "--port", "8080"]

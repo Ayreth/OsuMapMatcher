@@ -16,7 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from osureco.index import build  # noqa: E402
+from osumapmatcher.index import build  # noqa: E402
 
 
 def main() -> int:

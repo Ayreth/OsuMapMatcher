@@ -44,14 +44,14 @@ resolve to the Microsoft Store stub and fail. Always use the project venv:
 
 | Task | Command |
 |---|---|
-| Run the app | `.venv\Scripts\python.exe -m osureco` (or double-click `start.bat`) |
+| Run the app | `.venv\Scripts\python.exe -m osumapmatcher` (or double-click `start.bat`) |
 | Tests | `.venv\Scripts\python.exe -m pytest tests -q` |
 | Rebuild every variant | `.venv\Scripts\python.exe scripts\build_all.py` |
 | Rebuild one variant | `scripts\build_all.py --variants DT` |
 | Quality check on known maps | `scripts\sanity_check.py --why` |
 | Feature sanity on a sample | `scripts\featurize_sample.py --n 3000` |
 | Pack a release asset | `scripts\pack_release.py --variant nomod` |
-| Run the hosted API | `.venv\Scripts\python.exe -m osureco.api --port 8080` |
+| Run the hosted API | `.venv\Scripts\python.exe -m osumapmatcher.api --port 8080` |
 | Install an index for a server | `scripts\fetch_index.py --variants nomod,DT` |
 | See what is installed | `scripts\fetch_index.py --check --variants nomod,DT` |
 | Phase-1 tosu diagnostic | `scripts\sync_probe.py` |
@@ -69,7 +69,7 @@ otherwise look like a valid corpus of eleven maps).
 ## 3. Module map
 
 ```
-src/osureco/
+src/osumapmatcher/
   features.py   the core: featurize(), FEATURE_SPEC, Mods, .osu parser      775 l
   index.py      Scaler, Searcher, SearcherSet, search, explain()            693 l
   api.py        the hosted API: /api/v1, quota, token, CORS, upload      1080 l
@@ -271,7 +271,7 @@ is the tool.
 
 ### What exists now
 
-`src/osureco/api.py` serves `/api/v1` and is deployable
+`src/osumapmatcher/api.py` serves `/api/v1` and is deployable
 (`deploy/`: Dockerfile, compose, systemd unit, Caddy and nginx examples;
 `deploy/README.md` for sizing and operations, `docs/API.md` for the contract).
 
@@ -324,13 +324,13 @@ local index, the header shows `local — server unavailable (unreachable)`, and 
 20 s cooldown stops every map change from re-probing a server that is down.
 With no local index the failure is an honest 502 rather than a silent nothing.
 
-`--api ""` (or `OSURECO_API_URL=`) disables the network for good. An empty
+`--api ""` (or `OSUMAPMATCHER_API_URL=`) disables the network for good. An empty
 string and an absent value have to mean different things, otherwise there is no
 way to say "never phone home" — that distinction is load-bearing, not a detail.
 
 ### The tosu counter, shipped
 
-`counter/osureco-mapmatcher/` is a folder to drop into tosu's `static/`. No
+`counter/osu-mapmatcher/` is a folder to drop into tosu's `static/`. No
 Python, no launcher, no index: the page reads tosu's websocket directly and
 searches on the API.
 

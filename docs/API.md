@@ -412,7 +412,7 @@ socket.onmessage = async (event) => {
 
   if (!response.ok) return;                 // 429, 503: keep the last list
   const payload = await response.json();
-  payload.warnings.forEach((w) => console.warn("osureco:", w));
+  payload.warnings.forEach((w) => console.warn("mapmatcher:", w));
   render(payload.matches);
 };
 ```
@@ -428,7 +428,7 @@ player's machine.
 
 ```python
 import httpx
-from osureco.features import FEATURE_VERSION, featurize, variant_for_mods
+from osumapmatcher.features import FEATURE_VERSION, featurize, variant_for_mods
 
 API = "https://api.example.com/api/v1"
 
@@ -448,7 +448,7 @@ def similar(osu_bytes: bytes, mods: str = "", **options) -> dict:
         "variant": variant,
         "mods": mods,
         **options,
-    }, headers={"User-Agent": "osureco/0.1"}, timeout=15.0)
+    }, headers={"User-Agent": "osu-mapmatcher/0.1"}, timeout=15.0)
     response.raise_for_status()
     return response.json()
 ```
@@ -465,7 +465,7 @@ if meta["feature_version"] != FEATURE_VERSION:
 
 Cloudflare's bot protection answers **403** to a few well-known default user
 agents. Measured on a live instance: `Python-urllib/3.12` is refused on every
-request, while `curl`, a browser, and an explicit `User-Agent: osureco/0.1` all
+request, while `curl`, a browser, and an explicit `User-Agent: osu-mapmatcher/0.1` all
 pass. Whatever you write, **send a User-Agent**.
 
 That 403 comes from the edge, not from the API, so it has no `detail` field and

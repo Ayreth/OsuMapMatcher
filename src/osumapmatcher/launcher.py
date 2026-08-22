@@ -16,7 +16,7 @@ to downloading one rather than opening a page that could not answer anything.
 
 Where the index comes from, in order of precedence:
 
-  1. OSURECO_INDEX_URL, if set (a self-hosted mirror, for instance)
+  1. OSUMAPMATCHER_INDEX_URL, if set (a self-hosted mirror, for instance)
   2. this clone's git remote, so a fork serves its own index with no code change
   3. the upstream repository below
 
@@ -61,17 +61,17 @@ def remote_slug() -> str | None:
 
 
 def asset_name(variant: str = "nomod") -> str:
-    return f"osureco-index-{variant}.zip"
+    return f"osu-mapmatcher-index-{variant}.zip"
 
 
 def index_url(variant: str = "nomod") -> str:
     """
-    OSURECO_INDEX_URL peut etre soit une URL complete (une seule variante),
+    OSUMAPMATCHER_INDEX_URL peut etre soit une URL complete (une seule variante),
     soit un dossier se terminant par "/" sous lequel les archives portent leur
     nom habituel -- c'est ce qui permet a un serveur de tirer plusieurs
     variantes depuis un meme miroir.
     """
-    override = os.environ.get("OSURECO_INDEX_URL")
+    override = os.environ.get("OSUMAPMATCHER_INDEX_URL")
     if override:
         return override + asset_name(variant) if override.endswith("/") else override
     slug = remote_slug() or UPSTREAM_SLUG
@@ -97,7 +97,7 @@ def download_index(url: str, variant: str = "nomod") -> bool:
     print(f"Downloading the prebuilt {variant} index from:\n  {url}")
     target = index_root()
     target.mkdir(parents=True, exist_ok=True)
-    request = urllib.request.Request(url, headers={"User-Agent": "osureco-launcher"})
+    request = urllib.request.Request(url, headers={"User-Agent": "osu-mapmatcher-launcher"})
     try:
         with urllib.request.urlopen(request, timeout=60) as response:
             total = int(response.headers.get("Content-Length") or 0)
@@ -208,13 +208,13 @@ def main(argv: list[str] | None = None) -> int:
 
     from .remote import DEFAULT_API_URL
 
-    mode = args.mode or os.environ.get("OSURECO_MODE") or "remote"
-    # `--api ""` ou `OSURECO_API_URL=` desactive le distant : distinguer la
+    mode = args.mode or os.environ.get("OSUMAPMATCHER_MODE") or "remote"
+    # `--api ""` ou `OSUMAPMATCHER_API_URL=` desactive le distant : distinguer la
     # valeur vide de l'absence de valeur est ce qui rend le refus possible
     if args.api is not None:
         api_url = args.api.strip()
     else:
-        api_url = os.environ.get("OSURECO_API_URL", DEFAULT_API_URL).strip()
+        api_url = os.environ.get("OSUMAPMATCHER_API_URL", DEFAULT_API_URL).strip()
     if not api_url:
         mode = "local"
 

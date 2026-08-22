@@ -88,7 +88,7 @@ def fmt_val(val: Any) -> str:
 
 
 def http_get(url: str, timeout: float) -> bytes:
-    req = urllib.request.Request(url, headers={"User-Agent": "osureco-sync-probe/0.1"})
+    req = urllib.request.Request(url, headers={"User-Agent": "osu-mapmatcher-sync-probe/0.1"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.read()
 

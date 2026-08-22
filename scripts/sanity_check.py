@@ -23,8 +23,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from osureco.index import GROUP_NAMES, VARIANTS, SearcherSet  # noqa: E402
-from osureco.paths import index_root  # noqa: E402
+from osumapmatcher.index import GROUP_NAMES, VARIANTS, SearcherSet  # noqa: E402
+from osumapmatcher.paths import index_root  # noqa: E402
 
 #: liste fournie par l'utilisateur. Pour le set 302535 (Acid Burst), le lien ne
 #: precisait pas de difficulte : on prend la top diff, coherente avec le reste.

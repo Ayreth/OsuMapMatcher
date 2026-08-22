@@ -9,11 +9,11 @@ game or a prompt -- hence this script.
 
     python scripts/fetch_index.py                      # nomod
     python scripts/fetch_index.py --variants nomod,DT,HR,DTHR,HT
-    OSURECO_INDEX_URL=https://cdn.example/osureco/ python scripts/fetch_index.py
+    OSUMAPMATCHER_INDEX_URL=https://cdn.example/osu-mapmatcher/ python scripts/fetch_index.py
 
-The URL is resolved exactly like the launcher's: OSURECO_INDEX_URL first (a
+The URL is resolved exactly like the launcher's: OSUMAPMATCHER_INDEX_URL first (a
 full URL for one archive, or a folder ending in "/" holding
-osureco-index-<variant>.zip), then this clone's git remote, then upstream.
+osu-mapmatcher-index-<variant>.zip), then this clone's git remote, then upstream.
 """
 
 from __future__ import annotations
@@ -24,8 +24,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from osureco.launcher import ensure_index, has_index, index_url  # noqa: E402
-from osureco.paths import index_root  # noqa: E402
+from osumapmatcher.launcher import ensure_index, has_index, index_url  # noqa: E402
+from osumapmatcher.paths import index_root  # noqa: E402
 
 
 def main() -> int:

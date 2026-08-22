@@ -1,5 +1,5 @@
 [project]
-name = "osureco"
+name = "osu-mapmatcher"
 version = "0.1.0"
 description = "Moteur de recommandation de beatmaps osu! content-based, 100% local"
 requires-python = ">=3.11"
@@ -44,8 +44,8 @@ dev = [
 ]
 
 [project.scripts]
-osureco = "osureco.launcher:main"
-osureco-api = "osureco.api:main"
+osu-mapmatcher = "osumapmatcher.launcher:main"
+osu-mapmatcher-api = "osumapmatcher.api:main"
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -55,6 +55,6 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 # la page du serveur local n'est pas du code : sans ca, une install non
-# editable (un conteneur, un wheel) livre osureco sans son interface
+# editable (un conteneur, un wheel) livre le paquet sans son interface
 [tool.setuptools.package-data]
-osureco = ["static/*"]
+osumapmatcher = ["static/*"]

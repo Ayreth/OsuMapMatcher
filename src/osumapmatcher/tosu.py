@@ -33,7 +33,7 @@ DEFAULT_PORT = 24050
 #: par map survolee, ce qui sature le serveur distant pour rien. Une seconde
 #: laisse defiler la liste sans travail inutile, et reste imperceptible quand on
 #: s'arrete sur une map.
-DEFAULT_DEBOUNCE = float(os.environ.get("OSURECO_DEBOUNCE") or 1.0)
+DEFAULT_DEBOUNCE = float(os.environ.get("OSUMAPMATCHER_DEBOUNCE") or 1.0)
 STALL_TIMEOUT = 15.0
 HTTP_TIMEOUT = 8.0
 
@@ -106,7 +106,7 @@ class CurrentMap:
 
 
 def http_get(url: str, timeout: float = HTTP_TIMEOUT) -> bytes:
-    request = urllib.request.Request(url, headers={"User-Agent": "osureco/0.1"})
+    request = urllib.request.Request(url, headers={"User-Agent": "osu-mapmatcher/0.1"})
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return response.read()
 
