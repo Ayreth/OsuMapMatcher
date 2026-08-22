@@ -17,8 +17,8 @@ those maps are already in the dump, so there is nothing to retrieve but the
 labels. Fourteen requests, five seconds.
 
 ```bash
-.venv\Scripts\python.exe scriptsetch_loved.py
-.venv\Scripts\python.exe scriptsuild_all.py
+.venv\Scripts\python.exe scripts\fetch_loved.py
+.venv\Scripts\python.exe scripts\build_all.py
 ```
 
 The `nomod` index then reads: **147,573 ranked, 3,985 loved, 9,192 graveyard,
@@ -121,6 +121,8 @@ reading it:
 **Ranked and loved are not told apart.** The dump does not say which is which,
 so both are reported as coming from the dump rather than claiming a status that
 is not known. Only *unranked* is distinguished.
+
+*Lifted the same day — see the entry above.*
 
 ---
 
