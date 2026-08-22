@@ -418,9 +418,13 @@ const $ = (id) => document.getElementById(id);
    Le reste du fichier ne fait pas la difference : seules les fonctions de la
    section "host" changent. */
 const DEFAULT_API = "https://api.ayreth.site";
+//: le serveur que lance start.bat. S'il tourne, le counter s'en sert : tout
+//: reste alors sur la machine du joueur, index compris.
+const LOCAL_API = "http://127.0.0.1:8000";
 const HOST = {
   local: false,   // servi par le serveur Python ?
-  api: new URLSearchParams(location.search).get("api") || DEFAULT_API,
+  api: DEFAULT_API,
+  onLocalApi: false,
   variants: ["nomod"],
 };
 
@@ -616,6 +620,9 @@ async function search() {
       $("results").innerHTML =
         `<div class="empty">${HOST.local ? "Server unreachable." : "Cannot reach " + esc(HOST.api) + "."}</div>`;
     }
+    // en mode counter, l'API choisie au demarrage a pu disparaitre depuis
+    // (start.bat ferme, reseau coupe) : on rechoisit pour la prochaine map
+    if (!HOST.local) loadMeta();
   }
 }
 
@@ -883,16 +890,63 @@ function fromTosu(data) {
   };
 }
 
-async function loadMeta() {
+/* Une API repond-elle ici ? Renvoie son /meta, ou null. */
+async function askMeta(url) {
+  const stop = new AbortController();
+  const timer = setTimeout(() => stop.abort(), 1500);
   try {
-    const meta = await (await fetch(HOST.api + "/api/v1/meta")).json();
-    HOST.variants = meta.variants || ["nomod"];
-    const total = meta.n_maps ? (meta.n_maps.nomod || Object.values(meta.n_maps)[0]) : 0;
-    $("corpus").textContent = total
-      ? total.toLocaleString("en-US") + " maps indexed" : "";
+    const response = await fetch(url + "/api/v1/meta", { signal: stop.signal });
+    return response.ok ? await response.json() : null;
   } catch (err) {
-    $("corpus").textContent = "";
+    return null;
+  } finally {
+    clearTimeout(timer);
   }
+}
+
+/* Qui va repondre aux recherches ?
+
+   L'ordre suit le principe du projet : la machine du joueur d'abord. Si
+   start.bat tourne, son index sert et rien ne sort du reseau ; sinon on va sur
+   l'API publique. `?api=` tranche a la place de tout ca. */
+async function pickApi() {
+  const forced = new URLSearchParams(location.search).get("api");
+  if (forced) {
+    HOST.api = forced.replace(/\/$/, "");
+    HOST.onLocalApi = /^https?:\/\/(localhost|127\.0\.0\.1)/.test(HOST.api);
+    return askMeta(HOST.api);
+  }
+  const local = await askMeta(LOCAL_API);
+  // un serveur local sans index repond /meta mais ne sait rien chercher :
+  // le preferer enverrait le joueur dans un mur
+  if (local && (local.variants || []).length) {
+    HOST.api = LOCAL_API;
+    HOST.onLocalApi = true;
+    return local;
+  }
+  HOST.api = DEFAULT_API;
+  HOST.onLocalApi = false;
+  return askMeta(HOST.api);
+}
+
+function showApi() {
+  $("engineText").textContent = HOST.onLocalApi
+    ? "local · " + HOST.api.replace(/^https?:\/\//, "")
+    : HOST.api.replace(/^https?:\/\//, "");
+  $("engine").title = `Search runs on ${HOST.api}`;
+}
+
+async function loadMeta() {
+  const meta = await pickApi();
+  showApi();
+  if (!meta) {
+    $("corpus").textContent = "";
+    return;
+  }
+  HOST.variants = meta.variants || ["nomod"];
+  const total = meta.n_maps ? (meta.n_maps.nomod || Object.values(meta.n_maps)[0]) : 0;
+  $("corpus").textContent = total
+    ? total.toLocaleString("en-US") + " maps indexed" : "";
 }
 
 function connectTosu() {
@@ -925,16 +979,11 @@ function connectTosu() {
   };
 }
 
-function startCounterMode() {
+async function startCounterMode() {
   tosuUrl = location.origin;   // tosu sert cette page : meme origine que l'image
-  $("mode").hidden = true;     // un navigateur n'a pas d'index local a proposer
-  applyBackend({
-    wanted: "remote", active: "remote", fallback_reason: "",
-    api_url: HOST.api, has_local: false, has_remote: true,
-  });
-  $("engineText").textContent = HOST.api.replace(/^https?:\/\//, "");
+  $("mode").hidden = true;     // le choix se fait par la presence du serveur
   setStatus(false, "connecting to tosu…");
-  loadMeta();
+  await loadMeta();
   connectTosu();
 }
 

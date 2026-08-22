@@ -276,3 +276,24 @@ def test_sans_index_ni_api_le_serveur_refuse_de_demarrer(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="No index"):
         with TestClient(app):
             pass
+
+
+def test_le_serveur_local_s_ouvre_au_counter_tosu(local_app, mini_corpus):
+    """
+    Le counter est servi par tosu, donc sur une autre origine. Sans CORS il ne
+    pourrait pas utiliser l'index de la machine, et le mode "tout en local"
+    n'existerait que dans la page servie par Python.
+    """
+    remote = FakeRemote({"/api/v1/similar": _reply("corpus")})
+    with TestClient(local_app(remote)) as client:
+        response = client.get(
+            "/api/v1/meta", headers={"Origin": "http://127.0.0.1:24050"}
+        )
+        assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:24050"
+
+        # ... mais pas a n'importe qui : l'index d'un joueur n'a pas a etre
+        # interrogeable par une page qu'il visite
+        etranger = client.get(
+            "/api/v1/meta", headers={"Origin": "https://exemple-mechant.test"}
+        )
+        assert "access-control-allow-origin" not in etranger.headers

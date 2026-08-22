@@ -179,8 +179,24 @@ def create_app(
     # Le serveur local monte le MEME routeur que l'API hebergee (api.py), sans
     # quota ni jeton : un seul protocole a maintenir, et la page peut taper
     # /api/v1 ici ou a distance sans savoir lequel des deux elle a en face.
+    #
+    # Le CORS ouvert aux origines locales est ce qui permet au counter tosu --
+    # servi par tosu, donc sur un autre port -- d'utiliser cet index plutot que
+    # l'API publique. C'est le mode "tout en local" avec l'overlay de tosu.
+    local_config = ApiConfig.local()
+    if local_config.cors_regex:
+        from fastapi.middleware.cors import CORSMiddleware
+
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origin_regex=local_config.cors_regex,
+            allow_credentials=False,
+            allow_methods=["GET", "POST", "OPTIONS"],
+            allow_headers=["Content-Type", "Authorization", "X-API-Key"],
+            max_age=86400,
+        )
     app.include_router(
-        build_router(SearchService(lambda: state.searchers, ApiConfig.local()))
+        build_router(SearchService(lambda: state.searchers, local_config))
     )
 
     # -- page ------------------------------------------------------------------

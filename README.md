@@ -150,8 +150,17 @@ the search.
 2. Open `http://127.0.0.1:24050/osureco-mapmatcher/`, or pick it in tosu's
    dashboard.
 
-That is the whole installation. To point it at your own instance, add
-`?api=https://your.server` to the URL, or rebuild it with the address baked in:
+That is the whole installation.
+
+**It uses your own machine when it can.** On startup the counter looks for a
+local server on `http://127.0.0.1:8000` — the one `start.bat` runs — and uses
+it if it has an index. Nothing leaves your machine then. Otherwise it falls
+back to the hosted API. So the two ways of running this are not separate
+products: the overlay is the same either way, only the engine behind it
+changes.
+
+To point it at a different instance, add `?api=https://your.server` to the URL,
+or rebuild it with the address baked in:
 
 ```bash
 python scripts/pack_counter.py --api https://your.server --install

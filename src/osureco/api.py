@@ -113,6 +113,7 @@ class ApiConfig:
 
     variants: tuple[str, ...] = ()          # () = toutes celles presentes sur disque
     cors_origins: tuple[str, ...] = ()      # () = pas de CORS du tout
+    cors_regex: str = ""                    # motif d'origines, en plus de la liste
     token: str = ""
     rate_per_minute: float = 0.0            # 0 = pas de limitation
     burst: float = 60.0
@@ -142,8 +143,15 @@ class ApiConfig:
 
     @classmethod
     def local(cls) -> "ApiConfig":
-        """Reglages du serveur local : un seul utilisateur, aucune limite."""
-        return cls()
+        """
+        Reglages du serveur local : un seul utilisateur, aucune limite.
+
+        Le CORS y sert quand meme : le counter tosu est servi par tosu, sur un
+        autre port, et doit pouvoir interroger ce serveur-ci. On n'ouvre qu'aux
+        origines de la machine -- une page distante n'a rien a faire dans
+        l'index de quelqu'un.
+        """
+        return cls(cors_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$")
 
     @property
     def workers(self) -> int:
@@ -961,12 +969,13 @@ def create_api(
     service = SearchService(lambda: holder["searchers"], resolved)
     app.state.service = service
 
-    if resolved.cors_origins:
+    if resolved.cors_origins or resolved.cors_regex:
         from fastapi.middleware.cors import CORSMiddleware
 
         app.add_middleware(
             CORSMiddleware,
             allow_origins=list(resolved.cors_origins),
+            allow_origin_regex=resolved.cors_regex or None,
             allow_credentials=False,  # une API publique n'a pas de session
             allow_methods=["GET", "POST", "OPTIONS"],
             allow_headers=["Content-Type", "Authorization", "X-API-Key"],
