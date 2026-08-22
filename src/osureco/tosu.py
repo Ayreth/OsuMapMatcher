@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 import urllib.request
 from dataclasses import dataclass, field
@@ -27,7 +28,12 @@ log = logging.getLogger(__name__)
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 24050
-DEFAULT_DEBOUNCE = 0.3
+#: Temps de stabilite exige avant de traiter une map. Scroller dans la song
+#: select emet un message par frame ; a 0,3 s on lancait encore une recherche
+#: par map survolee, ce qui sature le serveur distant pour rien. Une seconde
+#: laisse defiler la liste sans travail inutile, et reste imperceptible quand on
+#: s'arrete sur une map.
+DEFAULT_DEBOUNCE = float(os.environ.get("OSURECO_DEBOUNCE") or 1.0)
 STALL_TIMEOUT = 15.0
 HTTP_TIMEOUT = 8.0
 

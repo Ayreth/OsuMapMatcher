@@ -75,6 +75,16 @@ Mods are handled: turn on DT, HR, DTHR or HT in osu! and the tool switches to a
 corpus computed with those mods, so a 7★ map played at 1.5× is compared against
 other maps at 1.5×.
 
+## Two ways to run it
+
+**As a tosu counter** — a folder to drop into tosu, no Python, no launcher,
+nothing to install. Works on any OS tosu runs on. See
+[Use it as a tosu counter](#use-it-as-a-tosu-counter).
+
+**As the desktop tool** — `start.bat`, a small local server, and the option to
+search entirely offline against your own index. Everything below describes
+this one.
+
 ## Requirements
 
 - **Windows** (the launcher is a `.bat`; the Python code itself is portable)
@@ -129,6 +139,29 @@ start.bat --api ""                             # never touch the network
 ```
 
 `OSURECO_API_URL` and `OSURECO_MODE` do the same thing through the environment.
+
+## Use it as a tosu counter
+
+The same interface, served by tosu itself. No Python, no `start.bat`, no index:
+the page talks to tosu's websocket for the current map and to the hosted API for
+the search.
+
+1. Copy `counter/osureco-mapmatcher/` into tosu's `static/` folder.
+2. Open `http://127.0.0.1:24050/osureco-mapmatcher/`, or pick it in tosu's
+   dashboard.
+
+That is the whole installation. To point it at your own instance, add
+`?api=https://your.server` to the URL, or rebuild it with the address baked in:
+
+```bash
+python scripts/pack_counter.py --api https://your.server --install
+```
+
+`--install` copies it straight into tosu if tosu sits next to this repository.
+
+The counter and the desktop page are **the same file**: `pack_counter.py`
+generates one from the other, so there is no second interface drifting out of
+sync (a test fails if the shipped counter no longer matches the page).
 
 ## Running it by hand
 

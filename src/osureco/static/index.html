@@ -411,6 +411,19 @@ const GROUPS = [
 const GROUP_LABEL = Object.fromEntries(GROUPS.map(([k, l]) => [k, l]));
 const $ = (id) => document.getElementById(id);
 
+/* Deux hotes possibles pour cette page :
+     - le serveur local Python, qui parle a tosu et peut chercher en local ;
+     - tosu lui-meme, qui la sert comme un counter -- pas de Python du tout,
+       websocket en direct et recherche sur l'API.
+   Le reste du fichier ne fait pas la difference : seules les fonctions de la
+   section "host" changent. */
+const DEFAULT_API = "https://api.ayreth.site";
+const HOST = {
+  local: false,   // servi par le serveur Python ?
+  api: new URLSearchParams(location.search).get("api") || DEFAULT_API,
+  variants: ["nomod"],
+};
+
 let live = null;       // map detected in osu!
 let pinned = null;     // map picked as the search source
 let tosuUrl = "";      // base URL of tosu, for the local background image
@@ -584,7 +597,9 @@ async function search() {
 
   const token = ++searchToken;
   try {
-    const response = await fetch("/api/similar?" + query);
+    const response = HOST.local
+      ? await fetch("/api/similar?" + query)
+      : await askApi(params);
     // une requete plus recente est partie entre-temps : cette reponse est perimee
     if (token !== searchToken) return;
     if (!response.ok) {
@@ -598,9 +613,44 @@ async function search() {
     render(data);
   } catch (err) {
     if (token === searchToken) {
-      $("results").innerHTML = `<div class="empty">Server unreachable.</div>`;
+      $("results").innerHTML =
+        `<div class="empty">${HOST.local ? "Server unreachable." : "Cannot reach " + esc(HOST.api) + "."}</div>`;
     }
   }
+}
+
+/* Mode counter : on parle a l'API sans intermediaire.
+
+   Le checksum suffit pour toute map ranked ou loved. Une map que le serveur ne
+   connait pas (non soumise, editee) repond 404 : on lui envoie alors le .osu,
+   que tosu nous sert sur la meme origine que cette page -- donc sans CORS et
+   sans que le fichier passe par un tiers. */
+async function askApi(params) {
+  const url = new URL(HOST.api + "/api/v1/similar");
+  params.forEach((value, key) => url.searchParams.set(key, value));
+  url.searchParams.set("mods", live ? live.mods : "");
+  url.searchParams.set("rate", live ? live.rate : 1);
+
+  const response = await fetch(url, { headers: { "Accept": "application/json" } });
+  if (response.status !== 404 || pinned || !live) return response;
+
+  // le fichier de tosu est celui de la map SELECTIONNEE : l'envoyer pour une
+  // map epinglee donnerait une reponse sur la mauvaise map
+  const file = await fetch("/files/beatmap/file");
+  if (!file.ok) return response;
+  const bytes = await file.arrayBuffer();
+
+  const upload = new URL(HOST.api + "/api/v1/similar/file");
+  params.forEach((value, key) => {
+    if (key !== "checksum") upload.searchParams.set(key, value);
+  });
+  upload.searchParams.set("mods", live.mods || "");
+  upload.searchParams.set("rate", live.rate || 1);
+  return fetch(upload, {
+    method: "POST",
+    headers: { "Content-Type": "application/octet-stream" },
+    body: bytes,
+  });
 }
 
 function render(data) {
@@ -706,7 +756,7 @@ function applyBackend(info) {
     : "Search runs on this machine";
 }
 
-$("mode").addEventListener("change", async (event) => {
+async function switchMode(event) {
   const wanted = event.target.value;
   try {
     const response = await fetch("/api/mode", {
@@ -728,7 +778,7 @@ $("mode").addEventListener("change", async (event) => {
   } catch (err) {
     $("engineText").textContent = "could not switch";
   }
-});
+}
 
 /* ---------- live updates ---------- */
 function setStatus(connected, text) {
@@ -766,18 +816,156 @@ async function poll() {
   }
 }
 
-const stream = new EventSource("/events");
-stream.onmessage = (event) => {
-  const message = JSON.parse(event.data);
-  if (message.type === "current") onLiveMap(message.current);
-  if (message.type === "backend") applyBackend(message.backend);
-};
-stream.onerror = () => setStatus(false, "event stream lost, reconnecting…");
+/* ---------- host A: the local Python server ---------- */
+function startLocalMode() {
+  $("mode").addEventListener("change", switchMode);
+  const stream = new EventSource("/events");
+  stream.onmessage = (event) => {
+    const message = JSON.parse(event.data);
+    if (message.type === "current") onLiveMap(message.current);
+    if (message.type === "backend") applyBackend(message.backend);
+  };
+  stream.onerror = () => setStatus(false, "event stream lost, reconnecting…");
+  poll();
+  setInterval(poll, 4000);
+}
 
-syncLabels();
-renderHeader();
-poll();
-setInterval(poll, 4000);
+/* ---------- host B: tosu, serving this page as a counter ---------- */
+
+/* Meme regle que le serveur : une map n'est traitee que si elle est restee
+   selectionnee un moment. Sans ca, scroller la song select lance une recherche
+   par map survolee. */
+const TOSU_DEBOUNCE_MS = 1000;
+let tosuTimer = null;
+let tosuKey = "";       // la map confirmee
+let tosuPending = "";   // celle dont on attend qu'elle se stabilise
+
+function variantForMods(mods) {
+  const text = (mods || "").toUpperCase();
+  const pairs = new Set();
+  for (let i = 0; i + 1 < text.length; i += 2) pairs.add(text.slice(i, i + 2));
+  const rate = (pairs.has("DT") || pairs.has("NC")) ? "DT"
+             : (pairs.has("HT") || pairs.has("DC")) ? "HT" : "";
+  const hard = pairs.has("HR") ? "HR" : "";
+  for (const candidate of [rate + hard, rate, hard]) {
+    if (candidate && HOST.variants.includes(candidate)) return candidate;
+  }
+  return "nomod";
+}
+
+/* Le payload de tosu, ramene a la forme que le reste de la page attend. */
+function fromTosu(data) {
+  const beatmap = data.beatmap || {};
+  const stats = beatmap.stats || {};
+  const mods = (data.play && data.play.mods && data.play.mods.name) || "";
+  const rate = (data.play && data.play.mods && data.play.mods.rate) || 1;
+  const time = beatmap.time || {};
+  const standard = !beatmap.mode || beatmap.mode.name === "osu";
+  return {
+    checksum: beatmap.checksum || "",
+    beatmap_id: beatmap.id || 0,
+    beatmapset_id: beatmap.set || 0,
+    artist: beatmap.artist || "",
+    title: beatmap.title || "",
+    version: beatmap.version || "",
+    mapper: beatmap.mapper || "",
+    mods, rate,
+    variant: variantForMods(mods),
+    stars: (stats.stars && (stats.stars.total || stats.stars.live)) || 0,
+    bpm: (stats.bpm && stats.bpm.common) || 0,
+    // longueur approchee : la vraie valeur (drain time) revient avec la reponse
+    length_s: Math.max(0, ((time.lastObject || 0) - (time.firstObject || 0)) / 1000),
+    // seul refus qu'on sait prononcer sans featuriser ; pour le reste, c'est
+    // l'API qui tranchera, avec sa raison
+    usable: standard,
+    skip_reason: standard ? null : "not_std",
+    url_web: beatmap.id ? `https://osu.ppy.sh/b/${beatmap.id}` : "",
+  };
+}
+
+async function loadMeta() {
+  try {
+    const meta = await (await fetch(HOST.api + "/api/v1/meta")).json();
+    HOST.variants = meta.variants || ["nomod"];
+    const total = meta.n_maps ? (meta.n_maps.nomod || Object.values(meta.n_maps)[0]) : 0;
+    $("corpus").textContent = total
+      ? total.toLocaleString("en-US") + " maps indexed" : "";
+  } catch (err) {
+    $("corpus").textContent = "";
+  }
+}
+
+function connectTosu() {
+  const socket = new WebSocket(`ws://${location.host}/websocket/v2`);
+  socket.onopen = () => setStatus(true, "tosu connected");
+  socket.onerror = () => socket.close();
+  socket.onclose = () => {
+    setStatus(false, "tosu lost, reconnecting…");
+    setTimeout(connectTosu, 2000);
+  };
+  socket.onmessage = (event) => {
+    let data;
+    try { data = JSON.parse(event.data); } catch (err) { return; }
+    const map = fromTosu(data);
+    if (!map.checksum) return;
+    // les mods font partie de l'identite : activer DT doit relancer la recherche
+    const key = `${map.checksum}|${map.mods}|${map.rate}`;
+    // tosu emet plusieurs fois par seconde. Comparer a la seule map confirmee
+    // ne suffit pas : chaque message identique reprogrammerait le minuteur, qui
+    // n'arriverait donc jamais a echeance. Il faut aussi retenir celle qu'on
+    // est deja en train d'attendre.
+    if (key === tosuKey || key === tosuPending) return;
+    tosuPending = key;
+    clearTimeout(tosuTimer);
+    tosuTimer = setTimeout(() => {
+      tosuKey = key;
+      tosuPending = "";
+      onLiveMap(map);
+    }, TOSU_DEBOUNCE_MS);
+  };
+}
+
+function startCounterMode() {
+  tosuUrl = location.origin;   // tosu sert cette page : meme origine que l'image
+  $("mode").hidden = true;     // un navigateur n'a pas d'index local a proposer
+  applyBackend({
+    wanted: "remote", active: "remote", fallback_reason: "",
+    api_url: HOST.api, has_local: false, has_remote: true,
+  });
+  $("engineText").textContent = HOST.api.replace(/^https?:\/\//, "");
+  setStatus(false, "connecting to tosu…");
+  loadMeta();
+  connectTosu();
+}
+
+/* ---------- boot ---------- */
+/* Qui nous sert ? Le serveur local repond du JSON avec un bloc `backend` ;
+   tosu repond autre chose, ou rien. On borne l'attente : un counter ne doit
+   pas rester bloque parce qu'un hote repond lentement a une question qui ne le
+   concerne pas. */
+async function detectLocalServer() {
+  const stop = new AbortController();
+  const timer = setTimeout(() => stop.abort(), 1500);
+  try {
+    const response = await fetch("/api/current", { cache: "no-store", signal: stop.signal });
+    if (!response.ok) return false;
+    if (!(response.headers.get("content-type") || "").includes("json")) return false;
+    return !!(await response.json()).backend;
+  } catch (err) {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function boot() {
+  syncLabels();
+  renderHeader();
+  HOST.local = await detectLocalServer();
+  if (HOST.local) startLocalMode(); else startCounterMode();
+}
+
+boot();
 </script>
 </body>
 </html>

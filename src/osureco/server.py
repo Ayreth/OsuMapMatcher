@@ -268,23 +268,56 @@ def create_app(
             and not (state.remote.cooling_down and state.has_local)
         )
 
+        note = ""
         if use_remote:
             try:
                 payload = await _search_remote(checksum, options)
                 state.note_backend("remote", "")
                 payload["backend"] = state.backend_state()
                 return payload
+            except HTTPException:
+                raise
             except RemoteError as exc:
+                unknown_map = exc.status == 404
                 if not state.has_local:
-                    raise HTTPException(502, f"Server unavailable: {exc.as_text()}") from exc
-                log.warning("bascule en local : %s", exc.as_text())
-                state.note_backend("local", exc.summary())
+                    if unknown_map:
+                        raise HTTPException(
+                            404,
+                            "This map is not in the server's corpus, and there is "
+                            "no local index to fall back on.",
+                        ) from exc
+                    raise HTTPException(
+                        502, f"Server unavailable: {exc.as_text()}"
+                    ) from exc
+                if unknown_map:
+                    # le serveur va bien, c'est la map qu'il ne connait pas :
+                    # on regarde dans l'index local sans changer de moteur ni
+                    # alarmer la page
+                    note = "not in the server's corpus, answered from the local index"
+                else:
+                    log.warning("bascule en local : %s", exc.as_text())
+                    state.note_backend("local", exc.summary())
+            except Exception as exc:  # jamais de 500 muet
+                log.exception("recherche distante : echec inattendu")
+                if not state.has_local:
+                    raise HTTPException(
+                        502, f"Unexpected failure: {type(exc).__name__}"
+                    ) from exc
+                state.note_backend("local", f"unexpected {type(exc).__name__}")
         elif state.wanted == "remote" and state.remote is not None:
             state.note_backend("local", state.remote.last_error or "server unavailable")
         else:
             state.note_backend("local", "")
 
-        payload = await asyncio.to_thread(_search_local, checksum, options)
+        try:
+            payload = await asyncio.to_thread(_search_local, checksum, options)
+        except HTTPException:
+            raise
+        except Exception as exc:  # la trace part dans les logs, pas dans le vide
+            log.exception("recherche locale : echec inattendu")
+            raise HTTPException(500, f"Unexpected failure: {type(exc).__name__}") from exc
+        if note:
+            payload["warnings"] = [*payload.get("warnings", []), note]
         payload["backend"] = state.backend_state()
         return payload
 
@@ -454,12 +487,7 @@ def _corpus_info(variant: str, searcher: Searcher | None) -> dict[str, Any]:
 
 
 def _in_corpus(searcher: Searcher | None, checksum: str) -> bool:
-    if not (searcher and checksum):
-        return False
-    row = searcher.db.execute(
-        "SELECT 1 FROM maps WHERE checksum = ?", (checksum,)
-    ).fetchone()
-    return row is not None
+    return bool(searcher) and searcher.has_checksum(checksum)
 
 
 def _resolve_target(searcher: Searcher | None, checksum: str | None) -> QueryTarget | None:

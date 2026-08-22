@@ -1,0 +1,12 @@
+{
+  "name": "osu!MapMatcher",
+  "author": "Ayreth",
+  "resolution": [
+    -1,
+    -1
+  ],
+  "authorLinks": [
+    "https://github.com/Ayreth/OsuMapMatcher"
+  ],
+  "version": "1.0.0"
+}

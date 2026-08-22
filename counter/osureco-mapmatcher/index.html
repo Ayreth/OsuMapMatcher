@@ -1,0 +1,971 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>osureco</title>
+<style>
+  :root {
+    --bg:       #0b0c10;
+    --panel:    #14161d;
+    --panel-2:  #1b1e27;
+    --card:     #1c1f29;
+    --line:     #262a36;
+    --text:     #e6e8ef;
+    --muted:    #8b93a7;
+    --dim:      #5c6478;
+    --accent:   #ff5c9e;
+    --violet:   #8b7bf0;
+    --ok:       #6ee7a8;
+    --warn:     #ffcc66;
+    --bad:      #ff7a7a;
+    --g-aim:        #ff6b9d;
+    --g-speed:      #4fc3f7;
+    --g-rhythm:     #ffd166;
+    --g-spacing:    #7ee787;
+    --g-parameters: #a78bfa;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 13px/1.4 "Segoe UI", system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 14px 18px 48px; }
+
+  /* ---- status bar ---- */
+  .top {
+    display: flex; align-items: center; gap: 10px;
+    padding-bottom: 10px; border-bottom: 1px solid var(--line);
+  }
+  .brand { font-weight: 700; letter-spacing: .06em; text-transform: uppercase; font-size: 12px; }
+  .brand span { color: var(--accent); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--bad); flex: none; }
+  .dot.on { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  .status { color: var(--muted); font-size: 12px; }
+  .top .right { margin-left: auto; color: var(--dim); font-size: 12px; }
+  /* ou tourne la recherche : discret quand tout va bien, visible quand non */
+  .engine { font-size: 12px; color: var(--dim); display: flex; align-items: center; gap: 6px; }
+  .engine.warn { color: var(--warn); }
+  .engine select {
+    background: var(--panel-2); color: var(--muted);
+    border: 1px solid var(--line); border-radius: 6px;
+    padding: 2px 6px; font: inherit; font-size: 12px; cursor: pointer;
+  }
+  .engine select:hover { color: var(--text); border-color: var(--dim); }
+  .engine select:disabled { opacity: .5; cursor: not-allowed; }
+
+  /* ---- current map banner ---- */
+  .current {
+    position: relative; overflow: hidden;
+    margin: 12px 0; border-radius: 12px; min-height: 132px;
+    border: 1px solid var(--line);
+    background: var(--panel);
+  }
+  .current .bg {
+    position: absolute; inset: 0;
+    background-size: cover; background-position: center 35%;
+    opacity: 0; transition: opacity .35s;
+  }
+  .current .bg.ready { opacity: .55; }
+  /* voile degrade : le texte doit rester lisible quel que soit le fond */
+  .current .veil {
+    position: absolute; inset: 0;
+    background:
+      linear-gradient(90deg, rgba(11,12,16,.96) 0%, rgba(11,12,16,.86) 45%,
+                             rgba(11,12,16,.35) 100%),
+      linear-gradient(0deg, rgba(11,12,16,.75) 0%, rgba(11,12,16,.1) 60%);
+  }
+  .current .fg { position: relative; padding: 16px 18px; }
+  .current::after {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+    background: var(--accent);
+  }
+  .current.pinned::after { background: var(--violet); }
+  .current .eyebrow {
+    font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase;
+    color: var(--violet); font-weight: 700; margin-bottom: 7px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .current .eyebrow button {
+    background: rgba(0,0,0,.5); border: 1px solid var(--line); color: var(--muted);
+    border-radius: 5px; padding: 2px 8px; font-size: 10px; cursor: pointer;
+    letter-spacing: .04em; text-transform: none;
+  }
+  .current .eyebrow button:hover { color: var(--text); border-color: var(--dim); }
+  .current .title {
+    font-size: 22px; font-weight: 650; line-height: 1.25;
+    text-shadow: 0 2px 12px rgba(0,0,0,.9);
+  }
+  .current .sub { color: var(--muted); margin-top: 4px; font-size: 13.5px;
+                  text-shadow: 0 2px 10px rgba(0,0,0,.9); }
+  .current .sub b { color: var(--text); font-weight: 600; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+  .chip {
+    background: rgba(0,0,0,.62); border: 1px solid var(--line); border-radius: 5px;
+    padding: 4px 10px; font-size: 12px; font-variant-numeric: tabular-nums;
+    backdrop-filter: blur(3px);
+  }
+  .chip b { color: var(--accent); }
+  .chip.mods { border-color: var(--g-rhythm); color: var(--g-rhythm); font-weight: 700; }
+  .chip.variant { border-color: var(--g-speed); color: var(--g-speed); }
+  .notice { margin-top: 10px; padding: 8px 10px; border-radius: 6px; font-size: 12px; }
+  .notice.warn { background: rgba(42,35,20,.9); border: 1px solid #574616; color: var(--warn); }
+
+  /* ---- collapsible settings ---- */
+  .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+  @media (max-width: 900px) { .panels { grid-template-columns: 1fr; } }
+  details.card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; overflow: hidden;
+  }
+  details.card[open] { border-color: #333a4d; }
+  details.card > summary {
+    list-style: none; cursor: pointer; padding: 11px 14px;
+    display: flex; align-items: center; gap: 10px; user-select: none;
+  }
+  details.card > summary::-webkit-details-marker { display: none; }
+  summary .caret {
+    color: var(--dim); font-size: 11px; transition: transform .15s; flex: none;
+  }
+  details[open] > summary .caret { transform: rotate(180deg); color: var(--violet); }
+  summary .lbl {
+    font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--muted); font-weight: 700; flex: none;
+  }
+  summary .sum {
+    font-size: 11.5px; color: var(--dim); margin-left: auto;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  summary .sum.on { color: var(--g-rhythm); }
+  summary .rst {
+    flex: none; background: none; border: 1px solid var(--line); color: var(--muted);
+    border-radius: 5px; padding: 2px 9px; font-size: 10px; cursor: pointer;
+    letter-spacing: .04em; font-family: inherit;
+  }
+  summary .rst:hover { color: var(--text); border-color: var(--dim); }
+  .card .inner { padding: 4px 14px 14px; border-top: 1px solid var(--line); }
+
+  .row {
+    display: grid; grid-template-columns: 104px 1fr 46px;
+    align-items: center; gap: 10px; margin-top: 9px;
+  }
+  .row label { font-size: 12px; display: flex; align-items: center; gap: 6px; cursor: help; }
+  .swatch { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+  .row output {
+    font-size: 12px; color: var(--muted); text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  input[type=range] {
+    -webkit-appearance: none; appearance: none; width: 100%;
+    height: 3px; background: var(--line); border-radius: 2px; outline: none;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 13px; height: 13px; border-radius: 50%;
+    background: var(--text); cursor: pointer; border: none;
+  }
+  input[type=range]::-moz-range-thumb {
+    width: 13px; height: 13px; border-radius: 50%;
+    background: var(--text); cursor: pointer; border: none;
+  }
+  .checkline { display: flex; align-items: center; gap: 7px; font-size: 12px; margin-top: 11px; }
+  .checkline input { accent-color: var(--accent); }
+  .selectline {
+    display: grid; grid-template-columns: 104px 1fr; align-items: center;
+    gap: 10px; margin-top: 12px;
+  }
+  .selectline label { font-size: 12px; }
+  select {
+    background: #000; color: var(--text); border: 1px solid var(--line);
+    border-radius: 5px; padding: 5px 7px; font-size: 12px; width: 100%;
+    font-family: inherit; cursor: pointer;
+  }
+  .hint { font-size: 11px; color: var(--dim); margin-top: 8px; line-height: 1.4; }
+
+  /* ---- results ---- */
+  .listhead {
+    margin: 4px 2px 10px; font-size: 11px; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--dim); font-weight: 700;
+  }
+  .hit {
+    background: var(--card); border: 1px solid #2b3040; border-radius: 12px;
+    margin-bottom: 9px; overflow: hidden; transition: border-color .12s;
+  }
+  .hit:hover { border-color: #3d4459; }
+  .hit.open { border-color: var(--violet); }
+  .hit .head {
+    display: grid; grid-template-columns: 112px minmax(0,1fr) auto 34px;
+    align-items: center; gap: 14px; padding: 12px 14px; cursor: pointer;
+  }
+  .thumb {
+    position: relative; width: 112px; height: 76px; border-radius: 9px;
+    overflow: hidden; flex: none;
+    background: linear-gradient(135deg, #2b3040, #1a1d26);
+  }
+  .thumb img {
+    width: 100%; height: 100%; object-fit: cover; display: block;
+    opacity: 0; transition: opacity .25s;
+  }
+  .thumb img.ready { opacity: 1; }
+  .thumb .rank {
+    position: absolute; top: 5px; left: 5px;
+    background: rgba(0,0,0,.72); color: var(--text);
+    border-radius: 5px; padding: 1px 7px;
+    font-size: 11.5px; font-weight: 700; font-variant-numeric: tabular-nums;
+  }
+  .hit .body { min-width: 0; }
+  .hit .name {
+    font-size: 15.5px; font-weight: 600; color: var(--accent); line-height: 1.3;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .hit .diff {
+    font-size: 13px; color: var(--text); margin-top: 2px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .hit .diff b { color: var(--muted); font-weight: 400; }
+  .actions { display: flex; gap: 8px; margin-top: 10px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    border: none; border-radius: 999px; padding: 6px 14px;
+    font: inherit; font-size: 12.5px; font-weight: 600;
+    color: #fff; text-decoration: none; cursor: pointer; white-space: nowrap;
+  }
+  .btn.direct { background: linear-gradient(135deg, #ff5c9e, #e8478c); }
+  .btn.direct:hover { background: linear-gradient(135deg, #ff77ae, #f2569a); }
+  .btn.info { background: linear-gradient(135deg, #7d6cf0, #6a58e0); }
+  .btn.info:hover { background: linear-gradient(135deg, #9183f4, #7a69ea); }
+  .btn.pivot { background: #333a4d; }
+  .btn.pivot:hover { background: #414a61; }
+  .stats {
+    display: flex; gap: 22px; align-items: center;
+    padding-left: 8px; font-variant-numeric: tabular-nums;
+  }
+  .stat { text-align: right; min-width: 52px; }
+  .stat .v { font-size: 15px; font-weight: 650; line-height: 1.1; }
+  .stat .k {
+    font-size: 9.5px; letter-spacing: .07em; text-transform: uppercase;
+    color: var(--dim); margin-top: 3px;
+  }
+  .stat.sr .v { color: var(--g-rhythm); }
+  .stat.sim .v { color: var(--ok); }
+  .chev {
+    background: none; border: none; color: var(--dim); cursor: pointer;
+    font-size: 15px; line-height: 1; padding: 6px; transition: transform .15s;
+  }
+  .hit.open .chev { transform: rotate(180deg); color: var(--violet); }
+  .detail {
+    display: none; padding: 12px 16px 14px 140px;
+    border-top: 1px solid #2b3040;
+  }
+  .hit.open .detail { display: block; }
+  .detail .barwrap { display: flex; align-items: center; gap: 12px; }
+  .bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden;
+         background: #000; flex: 1; }
+  .bar i { display: block; height: 100%; }
+  .detail .dist { font-size: 11.5px; color: var(--dim); white-space: nowrap; }
+  .keys {
+    display: flex; flex-wrap: wrap; gap: 12px; margin-top: 9px;
+    font-size: 11px; color: var(--muted);
+  }
+  .keys span { display: flex; align-items: center; gap: 4px; }
+  .why { font-size: 12.5px; margin-top: 10px; color: var(--muted); line-height: 1.6; }
+  .why em { font-style: normal; color: #d8b978; }
+  .why s { text-decoration: none; color: #7fbb97; }
+  .detail .actions { margin-top: 12px; }
+
+  /* deux rangees quand les stats ne tiennent plus a cote du titre */
+  @media (max-width: 760px) {
+    .hit .head {
+      grid-template-columns: 112px minmax(0,1fr) 34px; align-items: start;
+    }
+    .thumb { grid-area: 1 / 1 / span 2 / span 1; }
+    .hit .body { grid-area: 1 / 2; }
+    .chev { grid-area: 1 / 3; }
+    .stats {
+      grid-area: 2 / 2 / span 1 / span 2;
+      justify-content: flex-start; padding-left: 0; gap: 26px; margin-top: 12px;
+    }
+    .stat { text-align: left; }
+    .detail { padding-left: 16px; }
+  }
+  .empty { color: var(--muted); padding: 30px 4px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="top">
+    <span class="dot" id="dot"></span>
+    <span class="brand">osu<span>reco</span></span>
+    <span class="status" id="status">connecting…</span>
+    <span class="right" id="corpus"></span>
+    <span class="engine" id="engine">
+      <span id="engineText"></span>
+      <select id="mode" title="Where the search runs">
+        <option value="remote">server</option>
+        <option value="local">local</option>
+      </select>
+    </span>
+  </div>
+
+  <div class="current" id="current">
+    <div class="bg" id="curBg"></div>
+    <div class="veil"></div>
+    <div class="fg">
+      <div class="eyebrow" id="curEyebrow" hidden></div>
+      <div class="title" id="curTitle">Waiting for osu!…</div>
+      <div class="sub" id="curSub">Pick a map in song select.</div>
+      <div class="chips" id="curChips"></div>
+      <div id="curNotice"></div>
+    </div>
+  </div>
+
+  <div class="panels">
+    <details class="card" id="panelW">
+      <summary>
+        <span class="caret">▼</span>
+        <span class="lbl">Weights</span>
+        <span class="sum" id="sumW">default</span>
+        <button class="rst" id="resetW">reset</button>
+      </summary>
+      <div class="inner">
+        <div id="weights"></div>
+        <div class="selectline">
+          <label for="f_div" title="Instead of the closest maps overall, find maps that match on everything except one skill — same difficulty, different feel. Useful for practice.">Diverge on</label>
+          <select id="f_div">
+            <option value="">— nothing (nearest neighbours) —</option>
+          </select>
+        </div>
+        <div class="hint">
+          Hover a weight to see what it covers. Diverging keeps maps close on
+          every other group and picks the ones <b>furthest</b> on that one.
+        </div>
+      </div>
+    </details>
+
+    <details class="card" id="panelF">
+      <summary>
+        <span class="caret">▼</span>
+        <span class="lbl">Filters</span>
+        <span class="sum" id="sumF">default</span>
+        <button class="rst" id="resetF">reset</button>
+      </summary>
+      <div class="inner">
+        <div class="row">
+          <label title="Only consider maps within this many stars of the current one.">Star range</label>
+          <input type="range" id="f_star" min="0.1" max="3" step="0.1" value="0.5">
+          <output id="o_star">±0.5</output>
+        </div>
+        <div class="row">
+          <label title="Shortest map to allow, as a fraction of the current map's drain time.">Min length</label>
+          <input type="range" id="f_lmin" min="0.1" max="1" step="0.05" value="0.5">
+          <output id="o_lmin">×0.50</output>
+        </div>
+        <div class="row">
+          <label title="Longest map to allow, as a multiple of the current map's drain time.">Max length</label>
+          <input type="range" id="f_lmax" min="1" max="5" step="0.1" value="2">
+          <output id="o_lmax">×2.0</output>
+        </div>
+        <div class="row">
+          <label title="How many recommendations to show.">Results</label>
+          <input type="range" id="f_k" min="5" max="60" step="5" value="20">
+          <output id="o_k">20</output>
+        </div>
+        <div class="checkline">
+          <input type="checkbox" id="f_set" checked>
+          <label for="f_set" title="Other difficulties of the same beatmapset are near-identical by construction — they teach you nothing.">Exclude other difficulties of the same beatmapset</label>
+        </div>
+        <div class="checkline">
+          <input type="checkbox" id="f_song" checked>
+          <label for="f_song" title="Keep only the best-matching difficulty per song, so one popular track cannot fill half the list.">One difficulty per song</label>
+        </div>
+      </div>
+    </details>
+  </div>
+
+  <div class="listhead" id="listTitle">Recommendations</div>
+  <div id="results"><div class="empty">—</div></div>
+
+</div>
+
+<script>
+const GROUPS = [
+  ["aim", "Aim", "var(--g-aim)",
+   "Cursor movement: how far and how sharply you have to move between objects, "
+   + "how much the aim load spikes, and how much of it sits on sliders."],
+  ["speed", "Speed", "var(--g-speed)",
+   "Tapping: stream density, sustained finger speed, and how the tapping load "
+   + "is spread across the map rather than packed into one section."],
+  ["rhythm", "Rhythm", "var(--g-rhythm)",
+   "Timing feel: BPM and BPM changes, the gaps between objects, and how much "
+   + "of the map is streamed versus spaced out."],
+  ["spacing", "Spacing", "var(--g-spacing)",
+   "Raw geometry: distances between objects relative to circle size, the "
+   + "angles they form, and the cursor velocity the patterns demand."],
+  ["parameters", "Parameters", "var(--g-parameters)",
+   "Map settings and shape: CS, AR, OD, HP, slider ratio, object count, "
+   + "length, break time and overall density."],
+];
+const GROUP_LABEL = Object.fromEntries(GROUPS.map(([k, l]) => [k, l]));
+const $ = (id) => document.getElementById(id);
+
+/* Deux hotes possibles pour cette page :
+     - le serveur local Python, qui parle a tosu et peut chercher en local ;
+     - tosu lui-meme, qui la sert comme un counter -- pas de Python du tout,
+       websocket en direct et recherche sur l'API.
+   Le reste du fichier ne fait pas la difference : seules les fonctions de la
+   section "host" changent. */
+const DEFAULT_API = "https://api.ayreth.site";
+const HOST = {
+  local: false,   // servi par le serveur Python ?
+  api: new URLSearchParams(location.search).get("api") || DEFAULT_API,
+  variants: ["nomod"],
+};
+
+let live = null;       // map detected in osu!
+let pinned = null;     // map picked as the search source
+let tosuUrl = "";      // base URL of tosu, for the local background image
+let searchToken = 0;   // discards responses from superseded requests
+let lastQuery = "";
+let timer = null;
+
+/* ---------- build the settings ---------- */
+for (const [key, label, color, help] of GROUPS) {
+  const row = document.createElement("div");
+  row.className = "row";
+  row.innerHTML =
+    `<label title="${help}"><i class="swatch" style="background:${color}"></i>${label}</label>` +
+    `<input type="range" id="w_${key}" min="0" max="2" step="0.1" value="1" title="${help}">` +
+    `<output id="ow_${key}">1.0</output>`;
+  $("weights").appendChild(row);
+  $("f_div").insertAdjacentHTML("beforeend", `<option value="${key}">${label}</option>`);
+}
+
+const fmtTime = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+/* ---------- labels and summaries ---------- */
+function syncLabels() {
+  for (const [key] of GROUPS) $(`ow_${key}`).textContent = (+$(`w_${key}`).value).toFixed(1);
+  $("o_star").textContent = "±" + (+$("f_star").value).toFixed(1);
+  $("o_lmin").textContent = "×" + (+$("f_lmin").value).toFixed(2);
+  $("o_lmax").textContent = "×" + (+$("f_lmax").value).toFixed(1);
+  $("o_k").textContent = $("f_k").value;
+
+  // resume replie : on doit voir d'un coup d'oeil si un reglage est hors defaut
+  const offW = GROUPS.filter(([k]) => +$(`w_${k}`).value !== 1)
+    .map(([k, l]) => `${l} ${(+$(`w_${k}`).value).toFixed(1)}`);
+  if ($("f_div").value) offW.push(`diverging on ${GROUP_LABEL[$("f_div").value]}`);
+  $("sumW").textContent = offW.length ? offW.join(", ") : "default";
+  $("sumW").classList.toggle("on", offW.length > 0);
+
+  const offF = [];
+  if (+$("f_star").value !== 0.5) offF.push(`±${(+$("f_star").value).toFixed(1)}★`);
+  if (+$("f_lmin").value !== 0.5 || +$("f_lmax").value !== 2)
+    offF.push(`${(+$("f_lmin").value).toFixed(2)}–${(+$("f_lmax").value).toFixed(1)}× length`);
+  if ($("f_k").value !== "20") offF.push(`${$("f_k").value} results`);
+  if (!$("f_set").checked) offF.push("same set kept");
+  if (!$("f_song").checked) offF.push("duplicates kept");
+  $("sumF").textContent = offF.length ? offF.join(", ") : "default";
+  $("sumF").classList.toggle("on", offF.length > 0);
+}
+
+function scheduleSearch() {
+  syncLabels();
+  clearTimeout(timer);
+  timer = setTimeout(search, 180);
+}
+
+for (const el of document.querySelectorAll("input[type=range]")) {
+  el.addEventListener("input", scheduleSearch);
+}
+for (const id of ["f_set", "f_song", "f_div"]) {
+  $(id).addEventListener("change", scheduleSearch);
+}
+
+// les boutons vivent dans le <summary> : sans ca, cliquer replierait le panneau
+for (const [id, apply] of [
+  ["resetW", () => {
+    for (const [key] of GROUPS) $(`w_${key}`).value = 1;
+    $("f_div").value = "";
+  }],
+  ["resetF", () => {
+    $("f_star").value = 0.5; $("f_lmin").value = 0.5;
+    $("f_lmax").value = 2; $("f_k").value = 20;
+    $("f_set").checked = true; $("f_song").checked = true;
+  }],
+]) {
+  $(id).addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    apply();
+    syncLabels();
+    search();          // pas de debounce : le clic est deja une action franche
+  });
+}
+
+/* ---------- search source ---------- */
+function activeChecksum() {
+  return pinned ? pinned.checksum : (live ? live.checksum : null);
+}
+
+function setBackground(url) {
+  const box = $("curBg");
+  if (!url) { box.classList.remove("ready"); box.style.backgroundImage = ""; return; }
+  const probe = new Image();
+  probe.onload = () => {
+    box.style.backgroundImage = `url("${url}")`;
+    box.classList.add("ready");
+  };
+  probe.onerror = () => box.classList.remove("ready");
+  probe.src = url;
+}
+
+function renderHeader() {
+  $("current").classList.toggle("pinned", !!pinned);
+  const eyebrow = $("curEyebrow");
+
+  if (pinned) {
+    eyebrow.hidden = false;
+    eyebrow.innerHTML = `Searching from this map
+      <button id="unpin">← back to the game's map</button>`;
+    $("unpin").addEventListener("click", () => { pinned = null; renderHeader(); search(); });
+    $("curTitle").textContent = `${pinned.artist} - ${pinned.title}`;
+    $("curSub").innerHTML = `<b>[${esc(pinned.version)}]</b> &nbsp;by ${esc(pinned.creator)}`;
+    $("curChips").innerHTML = [
+      `<span class="chip"><b>${pinned.stars.toFixed(2)}★</b></span>`,
+      `<span class="chip">${Math.round(pinned.bpm)} BPM</span>`,
+      `<span class="chip">${fmtTime(pinned.length_s)}</span>`,
+    ].join("");
+    $("curNotice").innerHTML = "";
+    setBackground(pinned.url_cover);
+    return;
+  }
+
+  eyebrow.hidden = true;
+  if (!live) {
+    $("curTitle").textContent = "Waiting for osu!…";
+    $("curSub").textContent = "Pick a map in song select.";
+    $("curChips").innerHTML = "";
+    $("curNotice").innerHTML = "";
+    setBackground("");
+    return;
+  }
+  $("curTitle").textContent = `${live.artist} - ${live.title}`;
+  $("curSub").innerHTML = `<b>[${esc(live.version)}]</b> &nbsp;by ${esc(live.mapper)}`;
+  $("curChips").innerHTML = [
+    `<span class="chip"><b>${live.stars.toFixed(2)}★</b></span>`,
+    `<span class="chip">${Math.round(live.bpm)} BPM</span>`,
+    `<span class="chip">${fmtTime(live.length_s)}</span>`,
+    live.mods ? `<span class="chip mods">+${esc(live.mods)}</span>` : "",
+    (!live.mods && live.rate !== 1) ? `<span class="chip mods">×${live.rate}</span>` : "",
+    live.variant && live.variant !== "nomod"
+      ? `<span class="chip variant">${esc(live.variant)} corpus</span>` : "",
+  ].join("");
+  $("curNotice").innerHTML = live.usable ? "" :
+    `<div class="notice warn">Map skipped (${esc(live.skip_reason || "unknown")}) — osu!standard only.</div>`;
+  // tosu sert l'image de fond locale : pas d'appel externe pour la banniere
+  setBackground(tosuUrl ? `${tosuUrl}/files/beatmap/background?v=${live.checksum}` : "");
+}
+
+/* ---------- search ---------- */
+async function search() {
+  const checksum = activeChecksum();
+  if (!checksum || (!pinned && live && !live.usable)) {
+    $("results").innerHTML =
+      `<div class="empty">${live ? "This map cannot be used." : "No map detected yet."}</div>`;
+    return;
+  }
+  const params = new URLSearchParams({
+    checksum,
+    k: $("f_k").value,
+    star_range: $("f_star").value,
+    length_min: $("f_lmin").value,
+    length_max: $("f_lmax").value,
+    exclude_same_set: $("f_set").checked,
+    max_per_song: $("f_song").checked ? 1 : 0,
+  });
+  if ($("f_div").value) params.set("diverge", $("f_div").value);
+  for (const [key] of GROUPS) params.set(`w_${key}`, $(`w_${key}`).value);
+
+  const query = params.toString();
+  if (query === lastQuery) return;   // rien n'a change, inutile de redemander
+  lastQuery = query;
+
+  const token = ++searchToken;
+  try {
+    const response = HOST.local
+      ? await fetch("/api/similar?" + query)
+      : await askApi(params);
+    // une requete plus recente est partie entre-temps : cette reponse est perimee
+    if (token !== searchToken) return;
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      $("results").innerHTML = `<div class="empty">${esc(detail.detail || response.statusText)}</div>`;
+      return;
+    }
+    const data = await response.json();
+    if (token !== searchToken) return;
+    applyBackend(data.backend);
+    render(data);
+  } catch (err) {
+    if (token === searchToken) {
+      $("results").innerHTML =
+        `<div class="empty">${HOST.local ? "Server unreachable." : "Cannot reach " + esc(HOST.api) + "."}</div>`;
+    }
+  }
+}
+
+/* Mode counter : on parle a l'API sans intermediaire.
+
+   Le checksum suffit pour toute map ranked ou loved. Une map que le serveur ne
+   connait pas (non soumise, editee) repond 404 : on lui envoie alors le .osu,
+   que tosu nous sert sur la meme origine que cette page -- donc sans CORS et
+   sans que le fichier passe par un tiers. */
+async function askApi(params) {
+  const url = new URL(HOST.api + "/api/v1/similar");
+  params.forEach((value, key) => url.searchParams.set(key, value));
+  url.searchParams.set("mods", live ? live.mods : "");
+  url.searchParams.set("rate", live ? live.rate : 1);
+
+  const response = await fetch(url, { headers: { "Accept": "application/json" } });
+  if (response.status !== 404 || pinned || !live) return response;
+
+  // le fichier de tosu est celui de la map SELECTIONNEE : l'envoyer pour une
+  // map epinglee donnerait une reponse sur la mauvaise map
+  const file = await fetch("/files/beatmap/file");
+  if (!file.ok) return response;
+  const bytes = await file.arrayBuffer();
+
+  const upload = new URL(HOST.api + "/api/v1/similar/file");
+  params.forEach((value, key) => {
+    if (key !== "checksum") upload.searchParams.set(key, value);
+  });
+  upload.searchParams.set("mods", live.mods || "");
+  upload.searchParams.set("rate", live.rate || 1);
+  return fetch(upload, {
+    method: "POST",
+    headers: { "Content-Type": "application/octet-stream" },
+    body: bytes,
+  });
+}
+
+function render(data) {
+  const bits = [`Recommendations — ${data.count}`];
+  if (data.diverge) bits.push(`diverging on ${GROUP_LABEL[data.diverge] || data.diverge}`);
+  if (data.variant && data.variant !== "nomod") bits.push(`${data.variant} corpus`);
+  if (!data.query.in_corpus) bits.push("map not in corpus, featurised live");
+  $("listTitle").textContent = bits.join(" · ");
+
+  if (!data.matches.length) {
+    $("results").innerHTML =
+      `<div class="empty">No candidate left. Widen the star range or the length filter.</div>`;
+    return;
+  }
+
+  $("results").innerHTML = data.matches.map((m) => {
+    const bar = GROUPS.map(([key, label, color]) =>
+      `<i style="flex:${(m.group_share[key] || 0).toFixed(4)} 0 0;background:${color}" `
+      + `title="${label} ${Math.round(100 * (m.group_share[key] || 0))}%"></i>`).join("");
+    const keys = GROUPS.map(([key, label, color]) =>
+      `<span><i class="swatch" style="background:${color}"></i>${label} `
+      + `${Math.round(100 * (m.group_share[key] || 0))}%</span>`).join("");
+    const why = m.differences.map((d) => `<em>${esc(d)}</em>`).join(" · ")
+      + (m.differences.length && m.similarities.length ? " · " : "")
+      + m.similarities.map((s) => `<s>${esc(s)}</s>`).join(" · ");
+
+    return `<div class="hit" data-checksum="${m.checksum}">
+      <div class="head">
+        <div class="thumb">
+          ${m.url_cover ? `<img src="${m.url_cover}" alt="" loading="lazy"
+             onload="this.classList.add('ready')" onerror="this.remove()">` : ""}
+          <span class="rank">${m.rank}</span>
+        </div>
+        <div class="body">
+          <div class="name">${esc(m.artist)} - ${esc(m.title)}</div>
+          <div class="diff">[${esc(m.version)}] <b>· ${esc(m.creator)}</b></div>
+          <div class="actions">
+            <a class="btn direct" href="${m.url_direct}" title="Import into osu!">
+              osu!direct <span>⤓</span></a>
+            <a class="btn info" href="${m.url_web}" target="_blank" rel="noopener">
+              More Info <span>↗</span></a>
+          </div>
+        </div>
+        <div class="stats">
+          <div class="stat sr"><div class="v">${m.stars.toFixed(2)}★</div><div class="k">Stars</div></div>
+          <div class="stat"><div class="v">${Math.round(m.bpm)}</div><div class="k">BPM</div></div>
+          <div class="stat"><div class="v">${fmtTime(m.length_s)}</div><div class="k">Length</div></div>
+          <div class="stat sim"><div class="v">${Math.round(100 * m.similarity)}%</div><div class="k">Match</div></div>
+        </div>
+        <button class="chev" title="Why this map?">⌄</button>
+      </div>
+      <div class="detail">
+        <div class="barwrap">
+          <div class="bar">${bar}</div>
+          <span class="dist">distance ${m.distance.toFixed(2)}</span>
+        </div>
+        <div class="keys">${keys}</div>
+        <div class="why">${why || "No notable difference."}</div>
+        <div class="actions">
+          <button class="btn pivot" data-pivot="1">⌖ Find maps like this one</button>
+        </div>
+      </div>
+    </div>`;
+  }).join("");
+
+  const byChecksum = Object.fromEntries(data.matches.map((m) => [m.checksum, m]));
+  for (const card of document.querySelectorAll(".hit")) {
+    card.addEventListener("click", (event) => {
+      if (event.target.closest("a")) return;            // osu!direct / More Info
+      if (event.target.closest("[data-pivot]")) {
+        pinned = byChecksum[card.dataset.checksum];
+        renderHeader();
+        window.scrollTo({ top: 0, behavior: "smooth" });
+        search();
+        return;
+      }
+      card.classList.toggle("open");
+    });
+  }
+}
+
+/* ---------- search engine: server or local ---------- */
+let backend = null;
+
+function applyBackend(info) {
+  if (!info) return;
+  backend = info;
+  // pas de dispatchEvent : on reflete l'etat, on ne le redemande pas
+  $("mode").value = info.wanted;
+  $("mode").disabled = !(info.has_local && info.has_remote);
+
+  const fellBack = info.active !== info.wanted;
+  let text = info.active === "remote" ? "server" : "local";
+  if (fellBack && info.fallback_reason) {
+    text = `local — server unavailable (${info.fallback_reason})`;
+  } else if (info.wanted === "remote" && !info.has_local) {
+    text = "server";
+  }
+  $("engineText").textContent = text;
+  $("engine").classList.toggle("warn", fellBack);
+  $("engine").title = info.api_url
+    ? `Search runs on ${info.active === "remote" ? info.api_url : "this machine"}`
+    : "Search runs on this machine";
+}
+
+async function switchMode(event) {
+  const wanted = event.target.value;
+  try {
+    const response = await fetch("/api/mode", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: wanted }),
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      $("engineText").textContent = payload.detail || "could not switch";
+      $("engine").classList.add("warn");
+      if (backend) $("mode").value = backend.wanted;
+      return;
+    }
+    applyBackend(payload);
+    lastQuery = "";      // le moteur a change : la meme question vaut la peine
+    search();
+    poll();
+  } catch (err) {
+    $("engineText").textContent = "could not switch";
+  }
+}
+
+/* ---------- live updates ---------- */
+function setStatus(connected, text) {
+  $("dot").classList.toggle("on", !!connected);
+  $("status").textContent = text;
+}
+
+function onLiveMap(map) {
+  const changed = !live || live.checksum !== map.checksum || live.mods !== map.mods;
+  live = map;
+  if (!changed) return;
+  pinned = null;   // picking a map in game takes precedence over a pinned source
+  renderHeader();
+  search();
+}
+
+async function poll() {
+  try {
+    const info = await (await fetch("/api/current")).json();
+    // le SSE peut avoir rendu la banniere avant qu'on connaisse l'URL de tosu :
+    // dans ce cas il faut aller chercher le fond apres coup
+    const missedBackground = !tosuUrl && info.tosu_url;
+    tosuUrl = info.tosu_url || tosuUrl;
+    setStatus(info.connected,
+      info.connected ? "tosu connected" : ("tosu: " + (info.error || "offline")));
+    applyBackend(info.backend);
+    $("corpus").textContent = info.n_maps.toLocaleString("en-US") + " maps indexed"
+      + (info.variant && info.variant !== "nomod" ? ` · ${info.variant} corpus` : "");
+    if (info.current) onLiveMap(info.current);
+    if (missedBackground && live && !pinned) {
+      setBackground(`${tosuUrl}/files/beatmap/background?v=${live.checksum}`);
+    }
+  } catch (err) {
+    setStatus(false, "server unreachable");
+  }
+}
+
+/* ---------- host A: the local Python server ---------- */
+function startLocalMode() {
+  $("mode").addEventListener("change", switchMode);
+  const stream = new EventSource("/events");
+  stream.onmessage = (event) => {
+    const message = JSON.parse(event.data);
+    if (message.type === "current") onLiveMap(message.current);
+    if (message.type === "backend") applyBackend(message.backend);
+  };
+  stream.onerror = () => setStatus(false, "event stream lost, reconnecting…");
+  poll();
+  setInterval(poll, 4000);
+}
+
+/* ---------- host B: tosu, serving this page as a counter ---------- */
+
+/* Meme regle que le serveur : une map n'est traitee que si elle est restee
+   selectionnee un moment. Sans ca, scroller la song select lance une recherche
+   par map survolee. */
+const TOSU_DEBOUNCE_MS = 1000;
+let tosuTimer = null;
+let tosuKey = "";       // la map confirmee
+let tosuPending = "";   // celle dont on attend qu'elle se stabilise
+
+function variantForMods(mods) {
+  const text = (mods || "").toUpperCase();
+  const pairs = new Set();
+  for (let i = 0; i + 1 < text.length; i += 2) pairs.add(text.slice(i, i + 2));
+  const rate = (pairs.has("DT") || pairs.has("NC")) ? "DT"
+             : (pairs.has("HT") || pairs.has("DC")) ? "HT" : "";
+  const hard = pairs.has("HR") ? "HR" : "";
+  for (const candidate of [rate + hard, rate, hard]) {
+    if (candidate && HOST.variants.includes(candidate)) return candidate;
+  }
+  return "nomod";
+}
+
+/* Le payload de tosu, ramene a la forme que le reste de la page attend. */
+function fromTosu(data) {
+  const beatmap = data.beatmap || {};
+  const stats = beatmap.stats || {};
+  const mods = (data.play && data.play.mods && data.play.mods.name) || "";
+  const rate = (data.play && data.play.mods && data.play.mods.rate) || 1;
+  const time = beatmap.time || {};
+  const standard = !beatmap.mode || beatmap.mode.name === "osu";
+  return {
+    checksum: beatmap.checksum || "",
+    beatmap_id: beatmap.id || 0,
+    beatmapset_id: beatmap.set || 0,
+    artist: beatmap.artist || "",
+    title: beatmap.title || "",
+    version: beatmap.version || "",
+    mapper: beatmap.mapper || "",
+    mods, rate,
+    variant: variantForMods(mods),
+    stars: (stats.stars && (stats.stars.total || stats.stars.live)) || 0,
+    bpm: (stats.bpm && stats.bpm.common) || 0,
+    // longueur approchee : la vraie valeur (drain time) revient avec la reponse
+    length_s: Math.max(0, ((time.lastObject || 0) - (time.firstObject || 0)) / 1000),
+    // seul refus qu'on sait prononcer sans featuriser ; pour le reste, c'est
+    // l'API qui tranchera, avec sa raison
+    usable: standard,
+    skip_reason: standard ? null : "not_std",
+    url_web: beatmap.id ? `https://osu.ppy.sh/b/${beatmap.id}` : "",
+  };
+}
+
+async function loadMeta() {
+  try {
+    const meta = await (await fetch(HOST.api + "/api/v1/meta")).json();
+    HOST.variants = meta.variants || ["nomod"];
+    const total = meta.n_maps ? (meta.n_maps.nomod || Object.values(meta.n_maps)[0]) : 0;
+    $("corpus").textContent = total
+      ? total.toLocaleString("en-US") + " maps indexed" : "";
+  } catch (err) {
+    $("corpus").textContent = "";
+  }
+}
+
+function connectTosu() {
+  const socket = new WebSocket(`ws://${location.host}/websocket/v2`);
+  socket.onopen = () => setStatus(true, "tosu connected");
+  socket.onerror = () => socket.close();
+  socket.onclose = () => {
+    setStatus(false, "tosu lost, reconnecting…");
+    setTimeout(connectTosu, 2000);
+  };
+  socket.onmessage = (event) => {
+    let data;
+    try { data = JSON.parse(event.data); } catch (err) { return; }
+    const map = fromTosu(data);
+    if (!map.checksum) return;
+    // les mods font partie de l'identite : activer DT doit relancer la recherche
+    const key = `${map.checksum}|${map.mods}|${map.rate}`;
+    // tosu emet plusieurs fois par seconde. Comparer a la seule map confirmee
+    // ne suffit pas : chaque message identique reprogrammerait le minuteur, qui
+    // n'arriverait donc jamais a echeance. Il faut aussi retenir celle qu'on
+    // est deja en train d'attendre.
+    if (key === tosuKey || key === tosuPending) return;
+    tosuPending = key;
+    clearTimeout(tosuTimer);
+    tosuTimer = setTimeout(() => {
+      tosuKey = key;
+      tosuPending = "";
+      onLiveMap(map);
+    }, TOSU_DEBOUNCE_MS);
+  };
+}
+
+function startCounterMode() {
+  tosuUrl = location.origin;   // tosu sert cette page : meme origine que l'image
+  $("mode").hidden = true;     // un navigateur n'a pas d'index local a proposer
+  applyBackend({
+    wanted: "remote", active: "remote", fallback_reason: "",
+    api_url: HOST.api, has_local: false, has_remote: true,
+  });
+  $("engineText").textContent = HOST.api.replace(/^https?:\/\//, "");
+  setStatus(false, "connecting to tosu…");
+  loadMeta();
+  connectTosu();
+}
+
+/* ---------- boot ---------- */
+/* Qui nous sert ? Le serveur local repond du JSON avec un bloc `backend` ;
+   tosu repond autre chose, ou rien. On borne l'attente : un counter ne doit
+   pas rester bloque parce qu'un hote repond lentement a une question qui ne le
+   concerne pas. */
+async function detectLocalServer() {
+  const stop = new AbortController();
+  const timer = setTimeout(() => stop.abort(), 1500);
+  try {
+    const response = await fetch("/api/current", { cache: "no-store", signal: stop.signal });
+    if (!response.ok) return false;
+    if (!(response.headers.get("content-type") || "").includes("json")) return false;
+    return !!(await response.json()).backend;
+  } catch (err) {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function boot() {
+  syncLabels();
+  renderHeader();
+  HOST.local = await detectLocalServer();
+  if (HOST.local) startLocalMode(); else startCounterMode();
+}
+
+boot();
+</script>
+</body>
+</html>

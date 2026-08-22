@@ -22,10 +22,11 @@ returns the structurally closest maps out of 151,558, live, in a browser page.
 | Variants built | `nomod`, `DT`, `HR`, `DTHR`, `HT` |
 | Feature vector | 96 columns in 5 groups — aim 27, speed 14, rhythm 24, spacing 17, parameters 14 |
 | Search | ~10 ms (was 250 ms on dense star bands, see §5) |
-| Tests | 93, all passing |
+| Tests | 99, all passing |
 | Distribution | prebuilt `nomod` index as a GitHub release asset, 164 MB |
 | Hosted API | live at https://api.ayreth.site, five mod corpora |
 | Default mode | remote: a fresh install downloads no index at all |
+| Clients | the desktop page, and a tosu counter — the same file, two hosts |
 | On disk here | `data/corpus` 359 MB, `data/index` 1.1 GB |
 
 Everything under `data/` is generated and gitignored. The repo itself is ~1 MB.
@@ -78,7 +79,7 @@ src/osureco/
   tosu.py       websocket client, debounce, live featurisation             249 l
   launcher.py   one-click bootstrap: fetch index, start server              200 l
   paths.py      every path resolution, no hardcoded locations               118 l
-  static/index.html   the whole UI, vanilla, single file                    715 l
+  static/index.html   the whole UI, vanilla, one file, two hosts            947 l
 ```
 
 Data flow, live: `tosu websocket → debounce 300 ms → GET /files/beatmap/file →
@@ -194,6 +195,21 @@ places: `Scaler.transform` now returns C-order (new builds), `target_from_checks
 copies contiguously, and `search` guards the usearch call (indexes already
 distributed). `tests/test_search.py` writes its fixture in Fortran order on
 purpose.
+
+**One sqlite connection, several threads, and a 500 nobody could explain.**
+`Searcher.db` is opened with `check_same_thread=False` and was shared without a
+lock. Two overlapping searches steal each other's cursor and `row["pos"]` ends
+up raising `IndexError: tuple index out of range` — served to the browser as a
+bare Internal Server Error. It only shows when requests overlap, i.e. exactly
+when a player scrolls fast through song select. The lock now lives inside
+`Searcher`, not at the call sites: there were three of them and it takes one
+that forgets. `has_checksum()` exists so no caller has to touch `db` at all.
+
+**A map absent from the corpus is not an outage.** `RemoteError` classified
+every status-0 error as transient, including "this map is not in the server's
+corpus" — so hovering one unsubmitted map put the server in a 20-second
+quarantine and dropped everyone to local. `transient` is now explicit where the
+heuristic is wrong.
 
 **The SQL pre-filter cost 250 ms, twenty-five times the search itself.**
 `idx_maps_stars` finds the rows by star rating quickly, but testing `length_s`,
@@ -312,14 +328,28 @@ With no local index the failure is an honest 502 rather than a silent nothing.
 string and an absent value have to mean different things, otherwise there is no
 way to say "never phone home" — that distinction is load-bearing, not a detail.
 
+### The tosu counter, shipped
+
+`counter/osureco-mapmatcher/` is a folder to drop into tosu's `static/`. No
+Python, no launcher, no index: the page reads tosu's websocket directly and
+searches on the API.
+
+It is **the same file** as the desktop page. `static/index.html` detects its
+host — a local server answers `/api/current` with a `backend` block, tosu does
+not — and switches between two small adapters. `scripts/pack_counter.py`
+generates the counter folder from it, and `tests/test_counter.py` fails if the
+shipped copy drifts. Two interfaces to keep in sync was the obvious trap here.
+
+The CORS question that made the desktop tool proxy does not arise: tosu serves
+the counter, so `/files/beatmap/file` is same-origin, and the API allows any
+origin. Measured end to end on a real session: 178 ms for the upload path,
+including fetching the file from tosu.
+
 ### What is still open
 
-**A tosu counter** as a separate deliverable: a static page in the counter
-format, talking straight to the API, with the checksum-first / upload-on-404
-flow from `docs/API.md`. This is the distribution channel the API was built
-for, and the only remaining piece that needs no Python at all on the player's
-side. The browser would have to reach tosu's websocket itself and handle its
-own CORS, which is why the desktop tool proxies instead.
+**The counter has no settings UI.** tosu counters can declare settings that
+the dashboard renders; ours takes its API address from `?api=` or from the
+build. Fine for one instance, thin if it is ever published.
 
 **`start.bat` still installs the heavy extras** (`corpus,index`: pandas,
 pyarrow, scikit-learn). In remote mode none of them are used. Splitting the

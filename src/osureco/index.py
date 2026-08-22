@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 import math
 import sqlite3
+import threading
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -443,6 +444,14 @@ class Searcher:
         from usearch.index import Index
 
         self.data_dir = Path(data_dir)
+        # Une connexion sqlite ouverte en check_same_thread=False n'est pas
+        # reentrante : deux threads qui l'utilisent en meme temps se volent le
+        # curseur, et `row["pos"]` finit par lever IndexError sur une ligne dont
+        # la description ne correspond plus. C'est arrive en vrai des que deux
+        # recherches se chevauchaient. Le verrou vit ici, dans l'objet qui
+        # possede la connexion, plutot que chez chaque appelant -- il y en a
+        # trois, et il en suffit d'un qui oublie.
+        self._db_lock = threading.RLock()
         self.scaler = Scaler.load(self.data_dir / SCALER_FILE)
         # mmap : les pages ne sont lues que quand on touche vraiment les lignes
         self.vectors = np.load(self.data_dir / VECTORS_FILE, mmap_mode="r")
@@ -475,9 +484,10 @@ class Searcher:
         moins d'une milliseconde, pour 3,6 Mo de memoire et une lecture au
         chargement -- et sans toucher aux index deja distribues.
         """
-        rows = self.db.execute(
-            "SELECT pos, stars, length_s, beatmapset_id FROM maps"
-        ).fetchall()
+        with self._db_lock:
+            rows = self.db.execute(
+                "SELECT pos, stars, length_s, beatmapset_id FROM maps"
+            ).fetchall()
         size = max((row["pos"] for row in rows), default=-1) + 1
         stars = np.zeros(size, dtype=np.float32)
         lengths = np.zeros(size, dtype=np.float32)
@@ -494,19 +504,21 @@ class Searcher:
         return stars, lengths, sets, valid
 
     def _position_of(self, checksum: str) -> int:
-        row = self.db.execute(
-            "SELECT pos FROM maps WHERE checksum = ?", (checksum,)
-        ).fetchone()
+        with self._db_lock:
+            row = self.db.execute(
+                "SELECT pos FROM maps WHERE checksum = ?", (checksum,)
+            ).fetchone()
         return int(row["pos"]) if row else -1
 
     # -- resolution de la requete ---------------------------------------------
 
     def target_from_checksum(self, checksum: str) -> QueryTarget | None:
-        row = self.db.execute(
-            "SELECT pos, stars, length_s, bpm, beatmap_id, beatmapset_id,"
-            " artist, title, version FROM maps WHERE checksum = ?",
-            (checksum,),
-        ).fetchone()
+        with self._db_lock:
+            row = self.db.execute(
+                "SELECT pos, stars, length_s, bpm, beatmap_id, beatmapset_id,"
+                " artist, title, version FROM maps WHERE checksum = ?",
+                (checksum,),
+            ).fetchone()
         if row is None:
             return None
         return QueryTarget(
@@ -524,10 +536,16 @@ class Searcher:
             beatmap_id=int(row["beatmap_id"]),
         )
 
+    def has_checksum(self, checksum: str) -> bool:
+        """Cette map est-elle dans le corpus ? Passe par le verrou, comme tout
+        le reste : le SQL ne doit pas fuir hors de cette classe."""
+        return bool(checksum) and self._position_of(checksum) >= 0
+
     def target_from_beatmap_id(self, beatmap_id: int) -> QueryTarget | None:
-        row = self.db.execute(
-            "SELECT checksum FROM maps WHERE beatmap_id = ? LIMIT 1", (beatmap_id,)
-        ).fetchone()
+        with self._db_lock:
+            row = self.db.execute(
+                "SELECT checksum FROM maps WHERE beatmap_id = ? LIMIT 1", (beatmap_id,)
+            ).fetchone()
         return self.target_from_checksum(row["checksum"]) if row else None
 
     def target_from_features(self, features: dict[str, Any]) -> QueryTarget:
@@ -645,13 +663,14 @@ class Searcher:
         positions = candidates[shortlist]
 
         placeholders = ",".join("?" * len(positions))
-        rows = {
-            row["pos"]: row
-            for row in self.db.execute(
-                f"SELECT * FROM maps WHERE pos IN ({placeholders})",
-                [int(p) for p in positions],
-            )
-        }
+        with self._db_lock:
+            rows = {
+                row["pos"]: row
+                for row in self.db.execute(
+                    f"SELECT * FROM maps WHERE pos IN ({placeholders})",
+                    [int(p) for p in positions],
+                )
+            }
 
         matches: list[Match] = []
         seen: Counter = Counter()

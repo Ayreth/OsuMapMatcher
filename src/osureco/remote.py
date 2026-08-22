@@ -59,14 +59,30 @@ COOLDOWN_S = 20.0
 class RemoteError(RuntimeError):
     """Echec cote distant, avec de quoi decider s'il faut basculer en local."""
 
-    def __init__(self, message: str, *, status: int = 0, detail: str = "") -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        status: int = 0,
+        detail: str = "",
+        transient: bool | None = None,
+    ) -> None:
         super().__init__(message)
         self.status = status
         self.detail = detail
+        self._transient = transient
 
     @property
     def transient(self) -> bool:
-        """Vrai si le probleme vient du serveur ou du reseau, pas de la requete."""
+        """
+        Vrai si le probleme vient du serveur ou du reseau, pas de la question.
+
+        La distinction decide d'une mise en quarantaine de 20 s : traiter "cette
+        map n'est pas dans le corpus" comme une panne fait basculer tout le
+        monde en local des qu'un joueur survole une map non soumise.
+        """
+        if self._transient is not None:
+            return self._transient
         return self.status == 0 or self.status in (429, 500, 502, 503, 504)
 
     def as_text(self) -> str:
@@ -277,9 +293,14 @@ class RemoteBackend:
                 content_type="application/octet-stream",
             )
 
+        # Pas une panne : le serveur va tres bien, c'est la map qu'il ne connait
+        # pas. Le marquer transitoire mettrait le serveur en quarantaine a chaque
+        # map non soumise survolee.
         raise RemoteError(
             "this map is not in the server's corpus, and nothing local could be "
-            "sent instead"
+            "sent instead",
+            status=404,
+            transient=False,
         )
 
     def _remember(self, exc: RemoteError) -> None:

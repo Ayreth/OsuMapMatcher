@@ -345,10 +345,7 @@ class SearchService:
 
         def run() -> bool:
             with lock:
-                row = searcher.db.execute(
-                    "SELECT 1 FROM maps WHERE checksum = ?", (checksum,)
-                ).fetchone()
-            return row is not None
+                return searcher.has_checksum(checksum)
 
         return await asyncio.to_thread(run)
 

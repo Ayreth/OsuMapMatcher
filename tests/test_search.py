@@ -145,3 +145,30 @@ def test_le_chemin_ann_accepte_une_cible_non_contigue(searcher, monkeypatch):
     target.vector = np.asfortranarray(np.tile(target.vector, (2, 1)))[0]
     assert not target.vector.flags["C_CONTIGUOUS"]
     assert searcher.search(target, k=3, star_range=10.0)
+
+
+def test_le_searcher_supporte_des_recherches_simultanees(searcher):
+    """
+    Regression : la connexion sqlite est partagee et ouverte en
+    check_same_thread=False. Sans verrou, deux threads se volent le curseur et
+    `row["pos"]` finit par lever `IndexError: tuple index out of range` --
+    observe en vrai des qu'un joueur enchainait vite les maps, et servi au
+    navigateur en 500.
+    """
+    import concurrent.futures
+
+    checksums = _checksums(searcher)
+    inconnus = ["%032x" % (i * 7919) for i in range(20)]
+
+    def travail(i: int):
+        checksum = checksums[i % len(checksums)]
+        # on melange les trois acces SQL de la classe, comme le fait une page
+        # qui redemande pendant qu'une autre requete est encore en vol
+        searcher.has_checksum(inconnus[i % len(inconnus)])
+        target = searcher.target_from_checksum(checksum)
+        assert target is not None
+        return len(searcher.search(target, k=3, star_range=10.0))
+
+    with concurrent.futures.ThreadPoolExecutor(8) as pool:
+        resultats = list(pool.map(travail, range(120)))
+    assert all(count > 0 for count in resultats)
