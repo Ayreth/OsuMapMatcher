@@ -5,7 +5,9 @@
 **Find the osu! maps that actually play like the one you have selected.**
 Pick a map in song select, and this tool shows you the most structurally similar
 maps out of 151,558 ranked and loved beatmaps — updating live, on your second
-screen, with no account and no internet connection needed once installed.
+screen, with no account. The search runs on a hosted instance by default, so
+there is nothing to download; it can also run entirely on your own machine,
+offline, if you prefer.
 
 ![The recommendation list, updating live as you browse song select](docs/ui-overview.png)
 
@@ -79,7 +81,7 @@ other maps at 1.5×.
 - **osu!** (stable)
 - **[tosu](https://github.com/tosuapp/tosu)** running on its default port 24050
 - **Python 3.11+** — the launcher installs it via `winget` if it is missing
-- ~1 GB of free disk space for the index
+- an internet connection, or ~1 GB of free disk space — see below
 
 ## Quick start
 
@@ -89,15 +91,44 @@ other maps at 1.5×.
 3. Double-click **`start.bat`**.
 4. Your browser opens on `http://localhost:8000`. Click a map in song select.
 
-The first run creates a virtual environment, installs the dependencies and
-downloads the prebuilt index (~150 MB). That takes a few minutes. Every run
-after that starts in a couple of seconds.
+The first run creates a virtual environment and installs the dependencies.
+There is nothing else to download: by default the search runs on a hosted
+instance, so the first launch takes seconds rather than minutes.
 
-> The index comes from this repository's
-> [latest release](https://github.com/Ayreth/OsuMapMatcher/releases/latest).
-> If you cloned a fork, the launcher reads your own git remote instead, so your
-> fork serves your own index with no code change. `OSURECO_INDEX_URL` overrides
-> both if you want to host it somewhere else.
+## Where the search runs
+
+The tool always talks to tosu on your own machine — that part cannot move. Only
+the search itself has a choice, and the header lets you switch at any time.
+
+| | |
+|---|---|
+| **server** (default) | Your machine sends the map's checksum; the server answers with the neighbours. Nothing to download, no index on disk. |
+| **local** | Everything happens on your machine, offline, once you have an index (~290 MB per mod variant). |
+
+The checksum is all that normally leaves your machine — 32 characters, the same
+MD5 osu! itself uses to identify a beatmap. A map the server has never seen (an
+unsubmitted or edited map) is the exception: the tool then sends the 96 numbers
+it computed locally, or the `.osu` file itself if the server runs a different
+version of the feature set.
+
+**If the server is unreachable, the tool falls back to the local index** and
+says so in the header — provided you have one. The reverse also holds: local
+mode never touches the network.
+
+To get a local index, run `start.bat --mode local`; the launcher downloads the
+prebuilt NoMod one from this repository's
+[latest release](https://github.com/Ayreth/OsuMapMatcher/releases/latest) (164
+MB). If you cloned a fork, it reads your own git remote instead, so your fork
+serves your own index with no code change. `OSURECO_INDEX_URL` overrides both.
+
+To point the tool at a different instance, or at none at all:
+
+```bash
+start.bat --api https://osureco.example.com    # someone else's server
+start.bat --api ""                             # never touch the network
+```
+
+`OSURECO_API_URL` and `OSURECO_MODE` do the same thing through the environment.
 
 ## Running it by hand
 
@@ -107,12 +138,14 @@ python -m venv .venv
 .venv\Scripts\python.exe -m osureco.launcher
 ```
 
-Useful flags: `--port 8080`, `--no-browser`, `--build`.
+Useful flags: `--port 8080`, `--no-browser`, `--mode local`, `--api URL`,
+`--build`.
 
 ## Building your own index
 
-The prebuilt index covers **NoMod only**. To get the DT / HR / DTHR / HT corpora
-as well, or to rebuild from a newer dump, you need the raw beatmap files:
+Only needed for local mode. The prebuilt index covers **NoMod only**; to get the
+DT / HR / DTHR / HT corpora as well, or to rebuild from a newer dump, you need
+the raw beatmap files:
 
 1. Download a `*_osu_files.tar.bz2` archive from
    [data.ppy.sh](https://data.ppy.sh) (a few GB).

@@ -22,9 +22,10 @@ returns the structurally closest maps out of 151,558, live, in a browser page.
 | Variants built | `nomod`, `DT`, `HR`, `DTHR`, `HT` |
 | Feature vector | 96 columns in 5 groups — aim 27, speed 14, rhythm 24, spacing 17, parameters 14 |
 | Search | ~10 ms (was 250 ms on dense star bands, see §5) |
-| Tests | 75, all passing |
+| Tests | 93, all passing |
 | Distribution | prebuilt `nomod` index as a GitHub release asset, 164 MB |
-| Hosted API | shipped, optional: `/api/v1`, see `docs/API.md` |
+| Hosted API | live at https://api.ayreth.site, five mod corpora |
+| Default mode | remote: a fresh install downloads no index at all |
 | On disk here | `data/corpus` 359 MB, `data/index` 1.1 GB |
 
 Everything under `data/` is generated and gitignored. The repo itself is ~1 MB.
@@ -70,7 +71,8 @@ otherwise look like a valid corpus of eleven maps).
 src/osureco/
   features.py   the core: featurize(), FEATURE_SPEC, Mods, .osu parser      775 l
   index.py      Scaler, Searcher, SearcherSet, search, explain()            693 l
-  api.py        the hosted API: /api/v1, quota, token, CORS, upload      1075 l
+  api.py        the hosted API: /api/v1, quota, token, CORS, upload      1080 l
+  remote.py     client of the hosted API, urllib only, no new deps          297 l
   server.py     FastAPI: /api/similar, /api/current, /events (SSE), /       288 l
   corpus.py     batch build, multiprocessing, chunked parquet, resume       280 l
   tosu.py       websocket client, debounce, live featurisation             249 l
@@ -85,8 +87,10 @@ featurize() → scaler → weighted distance over pre-filtered candidates → JS
 Data flow, batch: `dump → ProcessPoolExecutor → featurize() → parquet chunks →
 RobustScaler → vectors.npy + vectors_raw.npy + usearch index + SQLite`.
 
-Data flow, remote: `client → POST /api/v1/similar{,/file} → md5 lookup in the
-corpus, else featurize() → same scaler, same distance → JSON`. `server.py` and
+Data flow, remote: `tosu → local server → checksum → GET /api/v1/similar on
+api.ayreth.site → JSON → page`. The local server is the one that talks to the
+API, not the browser: it already holds the checksum, the mods and the .osu, and
+it keeps CORS out of the picture. `server.py` and
 `api.py` mount the **same router** (`build_router`), so the local host and a
 hosted one speak one protocol — that is what makes a client's remote → local
 fallback a change of base URL and nothing else.
@@ -247,7 +251,7 @@ is the tool.
 
 ---
 
-## 7. Hosted API — shipped, client side still open
+## 7. Hosted API and remote mode — both shipped
 
 ### What exists now
 
@@ -282,23 +286,45 @@ And the one that matters: **`feature_version`**, a hash of `FEATURE_NAMES`
 returned by every response and rejected with 409 on mismatch — a vector built
 from a different feature set produces plausible, wrong answers, silently.
 
+### The client half, shipped
+
+The desktop tool defaults to `remote` and talks to https://api.ayreth.site.
+A fresh install now downloads **nothing**: no index, no 164 MB, first launch in
+seconds. `remote.py` is the client, `urllib` only — adding a dependency to the
+one thing meant to be light would have been self-defeating.
+
+Three attempts, in order of cost, and it only moves up a rung when the previous
+one *cannot* answer, never because it failed for another reason:
+
+  1. the checksum. Covers essentially all real traffic;
+  2. the features computed here, if the server announces the same
+     `feature_version`. ~3 KB, and the player's file stays on their disk;
+  3. the raw `.osu`, when the versions differ. The server featurises with its
+     own code, so an old client against a newer server still gets correct
+     answers instead of a 409. This is what makes updating the server safe.
+
+Fallback is automatic and *said out loud*: a transient failure switches to the
+local index, the header shows `local — server unavailable (unreachable)`, and a
+20 s cooldown stops every map change from re-probing a server that is down.
+With no local index the failure is an honest 502 rather than a silent nothing.
+
+`--api ""` (or `OSURECO_API_URL=`) disables the network for good. An empty
+string and an absent value have to mean different things, otherwise there is no
+way to say "never phone home" — that distinction is load-bearing, not a detail.
+
 ### What is still open
 
-**The client half.** Nothing in the desktop tool talks to a remote API yet:
-
-- a `local` / `remote` mode switch in `static/index.html`, surfaced in the
-  header next to the existing status indicator;
-- `OSURECO_API_URL` beside the existing `OSURECO_INDEX_URL`;
-- automatic fallback to local on 429, 503, timeout **or** `feature_version`
-  mismatch, said out loud in the interface rather than silently;
-- the page currently calls `/api/similar` and `/api/current`; `/api/v1/similar`
-  is mounted on the local server too, so switching the page to v1 is mostly
-  deleting the old endpoint afterwards.
-
 **A tosu counter** as a separate deliverable: a static page in the counter
-format, pointing at a hosted instance, with the checksum-first / upload-on-404
+format, talking straight to the API, with the checksum-first / upload-on-404
 flow from `docs/API.md`. This is the distribution channel the API was built
-for; it does not exist yet.
+for, and the only remaining piece that needs no Python at all on the player's
+side. The browser would have to reach tosu's websocket itself and handle its
+own CORS, which is why the desktop tool proxies instead.
+
+**`start.bat` still installs the heavy extras** (`corpus,index`: pandas,
+pyarrow, scikit-learn). In remote mode none of them are used. Splitting the
+install would cut the first run from a couple of minutes to about twenty
+seconds, at the cost of making local mode a second, explicit install step.
 
 **Rate limits are per worker** (each process has its own bucket). Fine for one
 worker; with several, either halve the setting or move the limit to the reverse

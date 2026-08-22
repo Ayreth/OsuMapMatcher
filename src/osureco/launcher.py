@@ -3,12 +3,16 @@
 """
 launcher.py - one-click entry point.
 
-Makes sure an index exists, then starts the local server and opens the browser.
+Starts the local server and opens the browser.
 
-The index is the only heavy piece: ~150 MB of numbers and metadata derived from
-the public ppy beatmap dump. Building it from scratch means downloading ~3 GB
-and burning a couple of minutes of CPU, so by default we fetch a prebuilt one
-from the repository's GitHub releases instead. `--build` does it locally.
+By default the search runs on the hosted API: nothing to download, and the
+first launch takes seconds instead of minutes. `--mode local` searches on this
+machine instead, which needs the index -- ~150 MB derived from the public ppy
+beatmap dump, fetched prebuilt from the repository's GitHub releases, or built
+here with `--build`.
+
+If the API cannot be reached and no index is installed, the launcher falls back
+to downloading one rather than opening a page that could not answer anything.
 
 Where the index comes from, in order of precedence:
 
@@ -148,6 +152,18 @@ def ensure_index(variants: list[str] | tuple[str, ...] = ("nomod",)) -> bool:
     return ok
 
 
+def probe_api(url: str) -> tuple[bool, str]:
+    """Le serveur repond-il, et avec quoi ? N'echoue jamais."""
+    from .remote import RemoteBackend
+
+    backend = RemoteBackend(url)
+    if not backend.probe():
+        return False, backend.last_error
+    info = backend.info()
+    total = info.n_maps.get("nomod") or (max(info.n_maps.values()) if info.n_maps else 0)
+    return True, f"{total} maps, corpora: {', '.join(info.variants)}"
+
+
 # --- local build --------------------------------------------------------------
 
 def build_index(variants: str) -> bool:
@@ -184,8 +200,23 @@ def main(argv: list[str] | None = None) -> int:
                         help="build the index locally instead of downloading it")
     parser.add_argument("--variants", default="nomod",
                         help="mod corpora to build with --build (nomod,DT,HR,DTHR,HT)")
+    parser.add_argument("--mode", choices=("remote", "local"), default=None,
+                        help="where the search runs (default: remote)")
+    parser.add_argument("--api", default=None, help="hosted API to use")
     parser.add_argument("--no-browser", dest="browser", action="store_false")
     args = parser.parse_args(argv)
+
+    from .remote import DEFAULT_API_URL
+
+    mode = args.mode or os.environ.get("OSURECO_MODE") or "remote"
+    # `--api ""` ou `OSURECO_API_URL=` desactive le distant : distinguer la
+    # valeur vide de l'absence de valeur est ce qui rend le refus possible
+    if args.api is not None:
+        api_url = args.api.strip()
+    else:
+        api_url = os.environ.get("OSURECO_API_URL", DEFAULT_API_URL).strip()
+    if not api_url:
+        mode = "local"
 
     print("osu!MapMatcher")
     print(f"  data folder : {data_dir()}")
@@ -193,22 +224,30 @@ def main(argv: list[str] | None = None) -> int:
     if args.build:
         if not build_index(args.variants):
             return 1
+        mode = "local"
+
+    if mode == "remote":
+        reachable, detail = probe_api(api_url)
+        print(f"  search      : {api_url}")
+        print(f"                {detail}" if reachable
+              else f"                unreachable - {detail}")
+        if not reachable and not has_index():
+            # ni serveur ni index : autant installer l'index maintenant plutot
+            # que d'ouvrir une page qui ne saura rien repondre
+            print("\nThe server is unreachable and there is no local index yet.")
+            if not fetch_or_explain():
+                return 1
+            mode = "local"
+        elif not reachable:
+            print("                falling back to the local index")
+            mode = "local"
     elif not has_index():
-        print("\nNo index found yet — this is a one-time setup.")
-        url = index_url()
-        if not url or not download_index(url):
-            if not url:
-                print("\nCould not work out where to download the index from "
-                      "(no GitHub remote in .git/config).")
-            print(
-                "\nFall back to building it yourself:\n"
-                "  1. grab a *_osu_files.tar.bz2 dump from https://data.ppy.sh\n"
-                f"  2. extract it into {data_dir() / 'osu_files'}\n"
-                "  3. run this again with --build\n"
-            )
+        print("\nNo index found yet - this is a one-time setup.")
+        if not fetch_or_explain():
             return 1
-    else:
-        print("  index       : already installed")
+
+    if mode == "local":
+        print(f"  index       : local, in {index_root()}")
 
     # imported late so a missing index fails with our message, not a stack trace
     import uvicorn
@@ -221,8 +260,28 @@ def main(argv: list[str] | None = None) -> int:
     print("Press Ctrl+C to stop.\n")
     if args.browser:
         webbrowser.open(address)
-    uvicorn.run(create_app(), host=args.host, port=args.port, log_level="warning")
+    uvicorn.run(
+        create_app(api_url=api_url, mode=mode),
+        host=args.host, port=args.port, log_level="warning",
+    )
     return 0
+
+
+def fetch_or_explain() -> bool:
+    """Telecharge l'index prebati, ou explique comment le construire."""
+    url = index_url()
+    if url and download_index(url):
+        return True
+    if not url:
+        print("\nCould not work out where to download the index from "
+              "(no GitHub remote in .git/config).")
+    print(
+        "\nFall back to building it yourself:\n"
+        "  1. grab a *_osu_files.tar.bz2 dump from https://data.ppy.sh\n"
+        f"  2. extract it into {data_dir() / 'osu_files'}\n"
+        "  3. run this again with --build\n"
+    )
+    return False
 
 
 if __name__ == "__main__":

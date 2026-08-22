@@ -61,6 +61,10 @@ class CurrentMap:
     rate: float = 1.0
     variant: str = "nomod"
     features: dict[str, Any] | None = None
+    #: le .osu tel que tosu l'a servi. Garde en memoire (~40 Ko) parce que le
+    #: mode distant peut avoir a l'envoyer tel quel : c'est la seule facon de
+    #: rester juste si le serveur n'a pas le meme jeu de features que nous.
+    raw: bytes | None = None
     skip_reason: str | None = None
     detected_at: float = field(default_factory=time.time)
 
@@ -230,6 +234,7 @@ class TosuWatcher:
         except Exception as exc:
             snapshot.skip_reason = f"fetch:{type(exc).__name__}"
             return
+        snapshot.raw = raw
 
         # On featurise avec les mods CANONIQUES de la variante, pas avec les
         # mods bruts : le corpus DT a ete bati avec "DT", et comparer un vecteur
