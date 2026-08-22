@@ -127,7 +127,18 @@ to cannot do, rather than offering a button that answers 404.
 - Seeds and counter-examples must be maps **in the corpus**. There is no
   file-upload form of `/similar/multi`; featurising N files to average them
   would cost N times a search, and the real use case is maps you already play.
-- Not deployed to `api.ayreth.site` at the time of writing.
+
+### Deployed
+
+Live on `api.ayreth.site`, verified from outside the machine: the same three
+seeds return the same five maps there as on a local index, and
+<https://api.ayreth.site/explore> answers with both modes working.
+
+The index was **not** rebuilt and the release asset was **not** replaced —
+checked rather than assumed: `feature_version` is still `8e824c8319c6` and the
+map counts are unchanged (`nomod` 160,905, `DT` 160,048, `HR` 160,905,
+`DTHR` 160,048, `HT` 161,064). Nothing here touches the features, so an index
+built before today still serves these endpoints correctly.
 
 ---
 
