@@ -39,9 +39,9 @@ METADATA = {
     "resolution": [-1, -1],
     "authorLinks": ["https://github.com/Ayreth/OsuMapMatcher"],
     # tosu s'en sert pour proposer la mise a jour : sans montee de version, une
-    # nouveauté de l'overlay n'atteint personne. 1.1.0 = badge et filtre des
-    # maps non classees.
-    "version": "1.1.0",
+    # nouveaute de l overlay n atteint personne. 1.2.0 = icones ranked, loved,
+    # graveyard et pending.
+    "version": "1.2.0",
 }
 
 

@@ -6,6 +6,40 @@ running than a number would.
 
 ---
 
+## 2026-08-22 (later) — ranked, loved and unranked are told apart
+
+The dump carries ranked and loved maps without ever recording which is which,
+so the index called both `dump` — a placeholder that refused to claim a status
+it could not know. `scripts/fetch_loved.py` closes that gap.
+
+It fetches only the **checksums** of loved difficulties and downloads nothing:
+those maps are already in the dump, so there is nothing to retrieve but the
+labels. Fourteen requests, five seconds.
+
+```bash
+.venv\Scripts\python.exe scriptsetch_loved.py
+.venv\Scripts\python.exe scriptsuild_all.py
+```
+
+The `nomod` index then reads: **147,573 ranked, 3,985 loved, 9,192 graveyard,
+155 pending.**
+
+Each recommendation now carries an icon before its title. They are inline SVG
+rather than emoji, because an emoji renders from whatever font the machine
+happens to have and a tombstone can arrive as an empty box. Ranked is the
+quietest of the four on purpose — the normal case should not compete for
+attention. Where the loved list is absent, the status stays `dump` and no icon
+is shown at all, which is the honest rendering of "not known".
+
+### Known limitation
+
+Coverage is 96.8%: 3,985 of the 4,118 loved difficulties are found in the dump.
+The other 133 were loved after the dump was taken, or re-uploaded since, so
+their MD5 no longer matches anything in it. They read as ranked — 0.09% of the
+ranked pool, and it corrects itself with the next dump.
+
+---
+
 ## 2026-08-22 — the most-played unranked maps join the pool
 
 The ppy dump holds only ranked and loved beatmaps. Maps like *Jump Training #1*
