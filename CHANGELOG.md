@@ -8,9 +8,10 @@ running than a number would.
 
 ## 2026-08-22 (evening) — ask with several maps, or against one
 
-Three questions the engine could not express before. All three are additive:
-the feature version is still `8e824c8319c6`, no index was rebuilt, and a client
-that ignores them sees exactly what it saw yesterday.
+Three questions the engine could not express before, and a page to ask them
+from without the game running. All of it is additive: the feature version is
+still `8e824c8319c6`, no index was rebuilt, and a client that ignores the new
+options sees exactly what it saw yesterday.
 
 ### Several maps at once
 
@@ -79,13 +80,47 @@ The avoided map is now excluded from its own results. That is not cosmetic: it
 sits at distance zero from itself, so it is the one the penalty spares *most* —
 at strength 0.15 it came back fourth.
 
+### A page to use it from, outside the game
+
+`/explore`, served both by the local server and by the hosted API. Until now the
+interface only worked with tosu and osu! running, because it read the map
+selected in game and could do nothing else. This one starts from a link.
+
+Two modes, and the switch between them is the first thing on the page:
+
+- **From one map** — paste `osu.ppy.sh/beatmapsets/41823#osu/131891`,
+  `osu.ppy.sh/b/131891`, `osu.ppy.sh/beatmaps/131891`, `osu://b/131891`, a bare
+  id, or an MD5. A link to a *mapset* is refused with an explanation rather than
+  guessed at, because the difficulty is the thing being searched.
+- **From several maps** — add as many as you like. Each one is resolved as you
+  add it, so you see its title, length and star rating immediately, and a map
+  that is not in the corpus says so straight away instead of at search time.
+
+Any result can become the next query (*Find maps like this one*), the
+counter-example (*Less like this*) or another seed (*Add to my list*). Searches
+are shareable: the URL carries `?b=131891` or `?ids=100695,1005019,1178810`, and
+opening one restores the search.
+
+**It works with no network at all.** Served by `start.bat`, the page queries the
+local index — verified: loading it and running a full search issues three
+requests, all to `127.0.0.1`, and none to `api.ayreth.site`. Only the beatmap
+thumbnails come from the internet, and they were already written to disappear
+quietly when they do not load. The page picks its own server the way the overlay
+does: its own origin first, then the local server, then the hosted API.
+
+It reads `supports` from `/api/v1/meta` and hides what the server it is talking
+to cannot do, rather than offering a button that answers 404.
+
 ### Known limitations
 
-- **There is no interface for any of this yet.** It is reachable over HTTP and
-  nowhere else. A page for it is the next piece of work.
-- **The tosu overlay does not get multi-map search, and will not.** It is driven
-  by the map selected in game, has no input field, and a corner of a second
-  screen is the wrong place to assemble a list. It is unchanged by this release.
+- **The tosu overlay does not get any of this, deliberately.** It is driven by
+  the map selected in game, has no input field, and a corner of a second screen
+  is the wrong place to assemble a list. It is untouched by this release — same
+  file, same version, nothing to re-install.
+- The two pages share their look by **copy**, not by a shared stylesheet: the
+  overlay has to stay a single self-contained file that tosu can serve, and the
+  hosted API has no static directory to mount. Changing a colour means changing
+  it twice.
 - A centroid is a compromise and can be one nobody asked for: seeds at 3★ and
   8★ return results around 6★. The response says so in `warnings` when the seeds
   span more than 2★, but it cannot do better than warn.

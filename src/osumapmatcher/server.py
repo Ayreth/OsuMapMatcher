@@ -205,6 +205,17 @@ def create_app(
     def page() -> FileResponse:
         return FileResponse(STATIC_DIR / "index.html")
 
+    @app.get("/explore")
+    def explore_page() -> FileResponse:
+        """
+        La page du site, servie ici aussi bien que par l'API hebergee.
+
+        Servie en local, elle interroge l'index local : c'est ce qui la rend
+        utilisable sans le moindre acces reseau. Elle choisit son serveur toute
+        seule, en commencant par sa propre origine.
+        """
+        return FileResponse(STATIC_DIR / "explore.html")
+
     # -- etat courant ----------------------------------------------------------
 
     @app.get("/api/current")

@@ -352,3 +352,64 @@ def test_le_serveur_local_et_l_api_hebergee_exposent_le_meme_routeur(
 
     assert routes(local) == routes(hosted)
     assert ("/api/v1/similar/multi", "post") in routes(local)
+
+
+# --- la page du site -----------------------------------------------------------
+
+def test_le_endpoint_map_accepte_aussi_un_beatmap_id(client, sums, ids):
+    """
+    Un lien osu! ne donne qu'un identifiant. Une page qui laisse coller
+    plusieurs liens doit pouvoir montrer de quelle map il s'agit AVANT de
+    chercher, sinon elle affiche une liste de numeros.
+    """
+    par_id = client.get(f"/api/v1/map/{ids[3]}").json()
+    par_checksum = client.get(f"/api/v1/map/{sums[3]}").json()
+    assert par_id == par_checksum
+    assert par_id["beatmap_id"] == ids[3]
+    assert par_id["label"]
+
+
+def test_un_identifiant_inconnu_reste_un_404(client):
+    assert client.get("/api/v1/map/999999999").status_code == 404
+    assert client.get(f"/api/v1/map/{'f' * 32}").status_code == 404
+
+
+def test_la_page_du_site_est_servie_par_les_deux_hotes(mini_index, monkeypatch):
+    """
+    `/explore` doit repondre sur l'API hebergee -- c'est la seule facon pour
+    quelqu'un qui n'installe rien d'utiliser l'outil -- et sur le serveur local,
+    ou elle interroge l'index de la machine, donc sans reseau.
+    """
+    from osumapmatcher import server as server_module
+
+    class _SansTosu:
+        connected = False
+        last_error = ""
+        base_url = ""
+
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def run(self) -> None:
+            return None
+
+    monkeypatch.setattr(server_module, "TosuWatcher", _SansTosu)
+    hosted = create_api(mini_index, ApiConfig())
+    local = server_module.create_app(mini_index, api_url="", mode="local")
+
+    for app in (hosted, local):
+        with TestClient(app) as page_client:
+            response = page_client.get("/explore")
+            assert response.status_code == 200
+            assert response.headers["content-type"].startswith("text/html")
+            body = response.text
+            # un seul fichier, aucune ressource externe : c'est ce qui la rend
+            # servable par une API qui n'a pas de dossier statique, et utilisable
+            # hors ligne
+            assert "<script" in body and "src=" not in body.split("<script")[1][:200]
+            assert "cdn." not in body and "fonts.googleapis" not in body
+
+
+def test_la_racine_de_l_api_annonce_la_page(mini_index):
+    with TestClient(create_api(mini_index, ApiConfig())) as page_client:
+        assert page_client.get("/").json()["explore"] == "/explore"

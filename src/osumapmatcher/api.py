@@ -66,6 +66,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from .features import (
@@ -89,6 +90,8 @@ from .index import (
 from .paths import index_root
 
 log = logging.getLogger(__name__)
+
+STATIC_DIR = Path(__file__).parent / "static"
 
 API_PREFIX = "/api/v1"
 #: nombre de seaux a jetons gardes en memoire avant nettoyage
@@ -854,9 +857,9 @@ def build_router(service: SearchService) -> APIRouter:
             },
         }
 
-    @router.get("/map/{checksum}", summary="Is this map in the corpus?")
+    @router.get("/map/{key}", summary="Is this map in the corpus?")
     async def map_info(
-        checksum: str,
+        key: str,
         variant: str | None = None,
         mods: str = "",
         _: None = Depends(guard(1.0)),
@@ -864,11 +867,20 @@ def build_router(service: SearchService) -> APIRouter:
         """
         Permet au client de savoir s'il doit envoyer le fichier : une map du
         corpus se cherche par checksum seul, une map inconnue doit etre uploadee.
+
+        `key` accepte aussi un beatmap_id, parce qu'un lien osu! n'en donne pas
+        d'autre. Une page qui laisse coller plusieurs liens doit pouvoir montrer
+        de quelle map il s'agit AVANT de chercher -- sinon elle affiche une
+        liste de numeros, ou elle paie une recherche entiere pour un libelle.
+        Un identifiant numerique rendait 404 auparavant : rien ne se casse.
         """
         name, searcher, warnings = service.pick(variant=variant, mods=mods)
-        target = await service.target_from_checksum(name, searcher, checksum.strip())
+        wanted = key.strip()
+        target = await service.target_from_checksum(name, searcher, wanted)
+        if target is None and wanted.isdigit():
+            target = await service.target_from_beatmap_id(name, searcher, int(wanted))
         if target is None:
-            raise HTTPException(404, "Unknown checksum in this corpus.")
+            raise HTTPException(404, "Unknown checksum or beatmap id in this corpus.")
         return {
             "variant": name,
             "warnings": warnings,
@@ -1245,9 +1257,23 @@ def create_api(
             "feature_version": FEATURE_VERSION,
             "variants": service.available(),
             "meta": f"{API_PREFIX}/meta",
+            "explore": "/explore",
             "docs": "/docs" if resolved.docs else None,
             "source": "https://github.com/Ayreth/OsuMapMatcher",
         }
+
+    @app.get("/explore", include_in_schema=False)
+    def explore_page() -> FileResponse:
+        """
+        La page publique, servie par l'API elle-meme.
+
+        Un fichier unique, sans aucune ressource externe : pas de dossier
+        statique a monter ici, et rien a servir de plus. C'est ce qui permet a
+        quelqu'un qui n'installe rien du tout d'utiliser l'outil -- ce pour quoi
+        cette API existe. Le meme fichier est servi par le serveur local, ou il
+        interroge l'index de la machine.
+        """
+        return FileResponse(STATIC_DIR / "explore.html")
 
     @app.get("/health", include_in_schema=False)
     @app.get("/healthz", include_in_schema=False)

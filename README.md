@@ -83,6 +83,54 @@ Mods are handled: turn on DT, HR, DTHR or HT in osu! and the tool switches to a
 corpus computed with those mods, so a 7★ map played at 1.5× is compared against
 other maps at 1.5×.
 
+## Without the game: the `/explore` page
+
+Everything above needs osu! and tosu running, because it follows the map you
+have selected. **`/explore` does not.** Paste a link, get recommendations — in a
+browser, with nothing else open.
+
+- On the hosted instance: **<https://api.ayreth.site/explore>**
+- Locally, once `start.bat` is running: **<http://localhost:8000/explore>**
+
+It is the same page in both places, and it picks whichever server can answer:
+its own origin first, then a local server, then the hosted API. Run it against
+`start.bat` and **nothing leaves your machine** — only the beatmap thumbnails
+come from the internet, and the page works without them.
+
+**From one map.** Any of these:
+
+```
+https://osu.ppy.sh/beatmapsets/41823#osu/131891
+https://osu.ppy.sh/b/131891
+https://osu.ppy.sh/beatmaps/131891
+osu://b/131891
+131891
+```
+
+A link to a *mapset* is refused rather than guessed at — a set has many
+difficulties and they are not similar to each other.
+
+**From several maps.** Add as many as you want and search from all of them at
+once: *here are five maps I love, find me more*. The search runs from their
+average, so it looks for what they have in common. Each map is checked as you
+add it, and the page tells you when the average is stretched over a range of
+difficulty so wide that it may resemble none of them.
+
+Two more controls, in both modes:
+
+- **Show me the ones that differ mostly in Aim / Speed / Rhythm / Spacing /
+  Parameters** — sorts by *what* is different, not by how much.
+- **Less like this** — point at a map you do not want and the search moves away
+  from it. This is `diverge` made concrete: instead of naming an abstract skill,
+  you name a map.
+
+Searches are shareable: the URL carries `?b=131891` or
+`?ids=100695,1005019,1178810`.
+
+> The tosu overlay does **not** have these. It is driven by the map selected in
+> game, has no input field, and a corner of a second screen is the wrong place
+> to assemble a list of maps. Two uses, two interfaces.
+
 ## What is in this repository
 
 | | |
@@ -102,6 +150,9 @@ other maps at 1.5×.
 - **[tosu](https://github.com/tosuapp/tosu)** running on its default port 24050
 - **Python 3.11+** — the launcher installs it via `winget` if it is missing
 - an internet connection, or ~1 GB of free disk space — see below
+
+None of it is needed for [the `/explore` page](#without-the-game-the-explore-page)
+on the hosted instance: that one is a browser and nothing else.
 
 ## Quick start
 

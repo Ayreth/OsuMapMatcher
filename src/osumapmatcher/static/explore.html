@@ -1,0 +1,1337 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>osu!MapMatcher — Explore</title>
+<!--
+  La page du site, distincte de l'overlay tosu (static/index.html).
+
+  L'overlay est pilote par la map selectionnee en jeu et tient dans un coin
+  d'ecran secondaire : pas de champ de saisie, pas de liste a composer. Ici on
+  n'a ni tosu ni osu! de lance, et on a de la place. Ce sont deux usages, pas
+  deux versions du meme.
+
+  Volontairement un seul fichier, sans aucune ressource externe : il est servi
+  tel quel par le serveur local ET par l'API hebergee, qui n'a pas de dossier
+  statique. Seules les vignettes viennent du reseau, et elles disparaissent
+  proprement si elles ne chargent pas -- la page marche hors ligne.
+
+  Le CSS et le rendu de carte sont repris de l'overlay a dessein : deux
+  interfaces du meme outil ne doivent pas avoir l'air d'outils differents.
+-->
+<style>
+  :root {
+    --bg:       #0b0c10;
+    --panel:    #14161d;
+    --panel-2:  #1b1e27;
+    --card:     #1c1f29;
+    --line:     #262a36;
+    --text:     #e6e8ef;
+    --muted:    #8b93a7;
+    --dim:      #5c6478;
+    --accent:   #ff5c9e;
+    --violet:   #8b7bf0;
+    --ok:       #6ee7a8;
+    --warn:     #ffcc66;
+    --bad:      #ff7a7a;
+    --g-aim:        #ff6b9d;
+    --g-speed:      #4fc3f7;
+    --g-rhythm:     #ffd166;
+    --g-spacing:    #7ee787;
+    --g-parameters: #a78bfa;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 13px/1.4 "Segoe UI", system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 14px 18px 64px; }
+
+  /* ---- status bar ---- */
+  .top {
+    display: flex; align-items: center; gap: 10px;
+    padding-bottom: 10px; border-bottom: 1px solid var(--line);
+  }
+  .brand { font-weight: 700; letter-spacing: .06em; text-transform: uppercase; font-size: 12px; }
+  .brand span { color: var(--accent); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); flex: none; }
+  .dot.on { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  .dot.bad { background: var(--bad); }
+  .top .right { margin-left: auto; color: var(--dim); font-size: 12px; }
+  .engine { font-size: 12px; color: var(--dim); display: flex; align-items: center; gap: 6px; }
+  .engine.warn { color: var(--warn); }
+  .engine b { font-weight: 600; color: var(--muted); }
+
+  /* ---- mode switch : on doit savoir en un coup d'oeil ou on est ---- */
+  .modewrap { margin: 22px 0 6px; }
+  .modeswitch {
+    display: inline-flex; padding: 3px; gap: 3px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 11px;
+  }
+  .modeswitch button {
+    display: flex; align-items: center; gap: 9px;
+    background: none; border: none; border-radius: 8px;
+    padding: 10px 20px; cursor: pointer; font: inherit;
+    color: var(--muted); transition: background .14s, color .14s;
+  }
+  .modeswitch button .n {
+    display: grid; place-items: center; width: 20px; height: 20px; flex: none;
+    border-radius: 50%; background: var(--panel-2); color: var(--dim);
+    font-size: 11px; font-weight: 700;
+  }
+  .modeswitch button .t { font-size: 13.5px; font-weight: 600; }
+  .modeswitch button:hover { color: var(--text); }
+  .modeswitch button[aria-pressed="true"] { background: var(--violet); color: #fff; }
+  .modeswitch button[aria-pressed="true"] .n { background: rgba(0,0,0,.28); color: #fff; }
+  .modeswitch button[disabled] { opacity: .38; cursor: not-allowed; }
+  .modeswitch button[disabled]:hover { color: var(--muted); }
+  .modenote { color: var(--dim); font-size: 12px; margin: 10px 2px 0; }
+
+  /* ---- query panel ---- */
+  .qpanel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 16px 18px; margin: 14px 0 12px;
+  }
+  .qpanel h2 {
+    margin: 0 0 3px; font-size: 15px; font-weight: 650;
+  }
+  .qpanel p.lede { margin: 0 0 14px; color: var(--muted); font-size: 12.5px; }
+  .askrow { display: flex; gap: 9px; flex-wrap: wrap; }
+  .askrow input[type=text] {
+    flex: 1 1 340px; min-width: 0;
+    background: #000; color: var(--text);
+    border: 1px solid var(--line); border-radius: 9px;
+    padding: 12px 14px; font: inherit; font-size: 14px;
+  }
+  .askrow input[type=text]:focus {
+    outline: none; border-color: var(--violet);
+  }
+  .askrow input[type=text]::placeholder { color: var(--dim); }
+  .go {
+    flex: none; border: none; border-radius: 9px; padding: 12px 22px;
+    font: inherit; font-size: 13.5px; font-weight: 650; color: #fff;
+    cursor: pointer; background: linear-gradient(135deg, #ff5c9e, #e8478c);
+  }
+  .go:hover { background: linear-gradient(135deg, #ff77ae, #f2569a); }
+  .go.ghost { background: #333a4d; }
+  .go.ghost:hover { background: #414a61; }
+  .go[disabled] { opacity: .45; cursor: not-allowed; }
+  .formats { margin-top: 11px; font-size: 11.5px; color: var(--dim); line-height: 1.7; }
+  .formats code {
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px;
+    padding: 1px 6px; font-size: 11px; color: var(--muted);
+  }
+  .err { color: var(--bad); font-size: 12.5px; margin-top: 10px; }
+
+  /* ---- resolved query banner ---- */
+  .qbanner {
+    display: flex; align-items: center; gap: 14px;
+    background: var(--panel-2); border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    border-radius: 10px; padding: 12px 14px; margin-top: 14px;
+  }
+  .qbanner.centroid { border-left-color: var(--violet); }
+  .qbanner .who { min-width: 0; flex: 1; }
+  .qbanner .eyebrow {
+    font-size: 10px; letter-spacing: .09em; text-transform: uppercase;
+    color: var(--violet); font-weight: 700; margin-bottom: 4px;
+  }
+  .qbanner .title {
+    font-size: 16px; font-weight: 620; line-height: 1.3;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .qbanner .meta { color: var(--muted); font-size: 12.5px; margin-top: 3px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    background: rgba(0,0,0,.5); border: 1px solid var(--line); border-radius: 5px;
+    padding: 4px 10px; font-size: 12px; font-variant-numeric: tabular-nums;
+  }
+  .chip b { color: var(--accent); }
+
+  /* ---- seed list (mode 2) ---- */
+  .seeds { display: grid; gap: 8px; margin-top: 14px; }
+  .seed {
+    display: grid; grid-template-columns: 64px minmax(0,1fr) auto auto;
+    align-items: center; gap: 12px;
+    background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 10px; padding: 8px 10px;
+  }
+  .seed .sthumb {
+    width: 64px; height: 44px; border-radius: 6px; overflow: hidden; flex: none;
+    background: linear-gradient(135deg, #2b3040, #1a1d26);
+  }
+  .seed .sthumb img {
+    width: 100%; height: 100%; object-fit: cover; display: block;
+    opacity: 0; transition: opacity .25s;
+  }
+  .seed .sthumb img.ready { opacity: 1; }
+  .seed .sname {
+    font-size: 13.5px; font-weight: 600;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .seed .ssub { color: var(--muted); font-size: 12px; margin-top: 2px;
+                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .seed .sstars {
+    font-size: 13px; font-weight: 650; color: var(--g-rhythm);
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+  .seed .drop {
+    background: none; border: 1px solid var(--line); color: var(--dim);
+    border-radius: 6px; width: 26px; height: 26px; cursor: pointer;
+    font-size: 14px; line-height: 1; padding: 0;
+  }
+  .seed .drop:hover { color: var(--bad); border-color: var(--bad); }
+  .seedsempty {
+    color: var(--dim); font-size: 12.5px; text-align: center;
+    padding: 18px 4px; border: 1px dashed var(--line); border-radius: 10px;
+    margin-top: 14px;
+  }
+  .seedfoot { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+  .seedfoot .count { color: var(--muted); font-size: 12.5px; margin-left: auto; }
+
+  /* ---- refine panel ---- */
+  .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 16px 0; }
+  @media (max-width: 900px) { .panels { grid-template-columns: 1fr; } }
+  details.card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; overflow: hidden;
+  }
+  details.card[open] { border-color: #333a4d; }
+  details.card > summary {
+    list-style: none; cursor: pointer; padding: 11px 14px;
+    display: flex; align-items: center; gap: 10px; user-select: none;
+  }
+  details.card > summary::-webkit-details-marker { display: none; }
+  summary .caret { color: var(--dim); font-size: 11px; transition: transform .15s; flex: none; }
+  details[open] > summary .caret { transform: rotate(180deg); color: var(--violet); }
+  summary .lbl {
+    font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--muted); font-weight: 700; flex: none;
+  }
+  summary .sum {
+    font-size: 11.5px; color: var(--dim); margin-left: auto;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  summary .sum.on { color: var(--g-rhythm); }
+  summary .rst {
+    flex: none; background: none; border: 1px solid var(--line); color: var(--muted);
+    border-radius: 5px; padding: 2px 9px; font-size: 10px; cursor: pointer;
+    letter-spacing: .04em; font-family: inherit;
+  }
+  summary .rst:hover { color: var(--text); border-color: var(--dim); }
+  .card .inner { padding: 4px 14px 14px; border-top: 1px solid var(--line); }
+  .row {
+    display: grid; grid-template-columns: 104px 1fr 46px;
+    align-items: center; gap: 10px; margin-top: 9px;
+  }
+  .row label { font-size: 12px; display: flex; align-items: center; gap: 6px; cursor: help; }
+  .swatch { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+  .row output {
+    font-size: 12px; color: var(--muted); text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  input[type=range] {
+    -webkit-appearance: none; appearance: none; width: 100%;
+    height: 3px; background: var(--line); border-radius: 2px; outline: none;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 13px; height: 13px; border-radius: 50%;
+    background: var(--text); cursor: pointer; border: none;
+  }
+  input[type=range]::-moz-range-thumb {
+    width: 13px; height: 13px; border-radius: 50%;
+    background: var(--text); cursor: pointer; border: none;
+  }
+  .checkline { display: flex; align-items: center; gap: 7px; font-size: 12px; margin-top: 11px; }
+  .checkline input { accent-color: var(--accent); }
+  .selectline {
+    display: grid; grid-template-columns: 104px 1fr; align-items: center;
+    gap: 10px; margin-top: 12px;
+  }
+  .selectline label { font-size: 12px; }
+  select {
+    background: #000; color: var(--text); border: 1px solid var(--line);
+    border-radius: 5px; padding: 5px 7px; font-size: 12px; width: 100%;
+    font-family: inherit; cursor: pointer;
+  }
+  .hint { font-size: 11px; color: var(--dim); margin-top: 8px; line-height: 1.4; }
+
+  /* ---- group pills + counter-example ---- */
+  .refine {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 13px 15px; margin-bottom: 12px;
+  }
+  .refine .lbl {
+    font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--muted); font-weight: 700;
+  }
+  .pills { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--panel-2); border: 1px solid var(--line); color: var(--muted);
+    border-radius: 999px; padding: 6px 14px; font: inherit; font-size: 12.5px;
+    cursor: pointer;
+  }
+  .pill:hover { color: var(--text); border-color: var(--dim); }
+  .pill[aria-pressed="true"] { background: #2a3040; color: var(--text); border-color: var(--dim); }
+  .avoidbox {
+    display: flex; align-items: center; gap: 12px; margin-top: 13px;
+    padding-top: 13px; border-top: 1px solid var(--line);
+  }
+  .avoidbox .slot { flex: 1; min-width: 0; }
+  .avoidbox .slot .empty2 { color: var(--dim); font-size: 12.5px; }
+  .avoidbox .slot .filled {
+    font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .avoidbox .slot .filled b { color: var(--bad); font-weight: 600; }
+  .avoidbox .drop {
+    flex: none; background: none; border: 1px solid var(--line); color: var(--dim);
+    border-radius: 6px; padding: 4px 11px; cursor: pointer; font: inherit; font-size: 11.5px;
+  }
+  .avoidbox .drop:hover { color: var(--bad); border-color: var(--bad); }
+  .strength { display: flex; align-items: center; gap: 9px; flex: none; }
+  .strength span { font-size: 11.5px; color: var(--dim); }
+  .strength input[type=range] { width: 96px; }
+
+  /* ---- notices ---- */
+  .notice { margin-top: 10px; padding: 9px 11px; border-radius: 7px; font-size: 12.5px; line-height: 1.5; }
+  .notice.warn { background: rgba(42,35,20,.9); border: 1px solid #574616; color: var(--warn); }
+  .notice.info { background: rgba(24,27,38,.9); border: 1px solid #2e3446; color: var(--muted); }
+  .notice.info b { color: var(--text); font-weight: 600; }
+
+  /* ---- results ---- */
+  .listhead {
+    margin: 4px 2px 10px; font-size: 11px; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--dim); font-weight: 700;
+  }
+  .sicon {
+    display: inline-flex; align-items: center; margin-right: 5px;
+    vertical-align: -1px; flex: none;
+  }
+  .sicon.ranked    { color: #6d7891; }
+  .sicon.approved  { color: #6d7891; }
+  .sicon.loved     { color: #ff6b9d; }
+  .sicon.graveyard { color: #e8b761; }
+  .sicon.pending   { color: #7cc4e8; }
+  .sicon.wip       { color: #7cc4e8; }
+  .hit {
+    background: var(--card); border: 1px solid #2b3040; border-radius: 12px;
+    margin-bottom: 9px; overflow: hidden; transition: border-color .12s;
+  }
+  .hit:hover { border-color: #3d4459; }
+  .hit.open { border-color: var(--violet); }
+  .hit .head {
+    display: grid; grid-template-columns: 112px minmax(0,1fr) auto 34px;
+    align-items: center; gap: 14px; padding: 12px 14px; cursor: pointer;
+  }
+  .thumb {
+    position: relative; width: 112px; height: 76px; border-radius: 9px;
+    overflow: hidden; flex: none;
+    background: linear-gradient(135deg, #2b3040, #1a1d26);
+  }
+  .thumb img {
+    width: 100%; height: 100%; object-fit: cover; display: block;
+    opacity: 0; transition: opacity .25s;
+  }
+  .thumb img.ready { opacity: 1; }
+  .thumb .rank {
+    position: absolute; top: 5px; left: 5px;
+    background: rgba(0,0,0,.72); color: var(--text);
+    border-radius: 5px; padding: 1px 7px;
+    font-size: 11.5px; font-weight: 700; font-variant-numeric: tabular-nums;
+  }
+  .hit .body { min-width: 0; }
+  .hit .name {
+    font-size: 15.5px; font-weight: 600; color: var(--accent); line-height: 1.3;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .hit .diff {
+    font-size: 13px; color: var(--text); margin-top: 2px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .hit .diff b { color: var(--muted); font-weight: 400; }
+  .actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    border: none; border-radius: 999px; padding: 6px 14px;
+    font: inherit; font-size: 12.5px; font-weight: 600;
+    color: #fff; text-decoration: none; cursor: pointer; white-space: nowrap;
+  }
+  .btn.direct { background: linear-gradient(135deg, #ff5c9e, #e8478c); }
+  .btn.direct:hover { background: linear-gradient(135deg, #ff77ae, #f2569a); }
+  .btn.info { background: linear-gradient(135deg, #7d6cf0, #6a58e0); }
+  .btn.info:hover { background: linear-gradient(135deg, #9183f4, #7a69ea); }
+  .btn.pivot { background: #333a4d; }
+  .btn.pivot:hover { background: #414a61; }
+  .btn.less { background: #4a2b39; }
+  .btn.less:hover { background: #5d3648; }
+  .btn.add { background: #2c4438; }
+  .btn.add:hover { background: #37553f; }
+  .stats {
+    display: flex; gap: 22px; align-items: center;
+    padding-left: 8px; font-variant-numeric: tabular-nums;
+  }
+  .stat { text-align: right; min-width: 52px; }
+  .stat .v { font-size: 15px; font-weight: 650; line-height: 1.1; }
+  .stat .k {
+    font-size: 9.5px; letter-spacing: .07em; text-transform: uppercase;
+    color: var(--dim); margin-top: 3px;
+  }
+  .stat.sr .v { color: var(--g-rhythm); }
+  .stat.sim .v { color: var(--ok); }
+  .chev {
+    background: none; border: none; color: var(--dim); cursor: pointer;
+    font-size: 15px; line-height: 1; padding: 6px; transition: transform .15s;
+  }
+  .hit.open .chev { transform: rotate(180deg); color: var(--violet); }
+  .detail { display: none; padding: 12px 16px 14px 140px; border-top: 1px solid #2b3040; }
+  .hit.open .detail { display: block; }
+  .detail .barwrap { display: flex; align-items: center; gap: 12px; }
+  .bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden;
+         background: #000; flex: 1; }
+  .bar i { display: block; height: 100%; }
+  .detail .dist { font-size: 11.5px; color: var(--dim); white-space: nowrap; }
+  .keys {
+    display: flex; flex-wrap: wrap; gap: 12px; margin-top: 9px;
+    font-size: 11px; color: var(--muted);
+  }
+  .keys span { display: flex; align-items: center; gap: 4px; }
+  .why { font-size: 12.5px; margin-top: 10px; color: var(--muted); line-height: 1.6; }
+  .why em { font-style: normal; color: #d8b978; }
+  .why s { text-decoration: none; color: #7fbb97; }
+  .why .versus { color: var(--dim); font-style: italic; }
+  .detail .actions { margin-top: 12px; }
+
+  @media (max-width: 760px) {
+    .hit .head { grid-template-columns: 112px minmax(0,1fr) 34px; align-items: start; }
+    .thumb { grid-area: 1 / 1 / span 2 / span 1; }
+    .hit .body { grid-area: 1 / 2; }
+    .chev { grid-area: 1 / 3; }
+    /* Toute la largeur, colonne 1 comprise : demarrer en colonne 2 laisse les
+       quatre stats se partager 217 px sur un telephone, et la derniere sort de
+       l'ecran. L'overlay ne rencontre pas le probleme, il ne vit pas sur mobile. */
+    .stats {
+      grid-area: 2 / 1 / span 1 / span 3;
+      justify-content: space-between; padding-left: 0; gap: 10px; margin-top: 12px;
+    }
+    .stat { text-align: left; }
+    .detail { padding-left: 16px; }
+    .seed { grid-template-columns: 64px minmax(0,1fr) auto; }
+    .seed .sstars { grid-area: 2 / 2; }
+  }
+  .empty { color: var(--muted); padding: 30px 4px; text-align: center; }
+  .foot {
+    margin-top: 30px; padding-top: 14px; border-top: 1px solid var(--line);
+    color: var(--dim); font-size: 11.5px; line-height: 1.7;
+  }
+  .foot a { color: var(--muted); }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="top">
+    <span class="dot" id="dot"></span>
+    <span class="brand">osu!<span>mapmatcher</span></span>
+    <span class="engine" id="engine">searching on <b id="engineText">…</b></span>
+    <span class="right" id="corpus"></span>
+  </div>
+
+  <div class="modewrap">
+    <div class="modeswitch" role="group" aria-label="Search mode">
+      <button id="modeOne" aria-pressed="true">
+        <span class="n">1</span><span class="t">From one map</span>
+      </button>
+      <button id="modeMany" aria-pressed="false">
+        <span class="n">N</span><span class="t">From several maps</span>
+      </button>
+    </div>
+    <div class="modenote" id="modeNote"></div>
+  </div>
+
+  <!-- ---------- mode 1 : une map ---------- -->
+  <div class="qpanel" id="viewOne">
+    <h2>Find maps that play like this one</h2>
+    <p class="lede">Paste an osu! beatmap link, or just its id.</p>
+    <div class="askrow">
+      <input type="text" id="oneInput" spellcheck="false" autocomplete="off"
+             placeholder="https://osu.ppy.sh/beatmapsets/41823#osu/131891">
+      <button class="go" id="oneGo">Find similar maps</button>
+    </div>
+    <div class="formats">
+      Accepted: <code>osu.ppy.sh/beatmapsets/41823#osu/131891</code>
+      <code>osu.ppy.sh/b/131891</code> <code>osu.ppy.sh/beatmaps/131891</code>
+      <code>131891</code> — and the map's MD5, if you happen to have it.
+    </div>
+    <div class="err hidden" id="oneErr"></div>
+    <div id="oneBanner"></div>
+  </div>
+
+  <!-- ---------- mode 2 : plusieurs maps ---------- -->
+  <div class="qpanel hidden" id="viewMany">
+    <h2>Find maps that play like all of these</h2>
+    <p class="lede">
+      Add the maps you like. The search runs from their average, so it looks for
+      what they have in common.
+    </p>
+    <div class="askrow">
+      <input type="text" id="manyInput" spellcheck="false" autocomplete="off"
+             placeholder="Paste a link or an id, then press Enter">
+      <button class="go ghost" id="manyAdd">Add to the list</button>
+    </div>
+    <div class="err hidden" id="manyErr"></div>
+    <div id="seedList"></div>
+    <div class="seedfoot">
+      <button class="go" id="manyGo" disabled>Find maps like these</button>
+      <button class="go ghost" id="manyClear">Clear</button>
+      <span class="count" id="seedCount"></span>
+    </div>
+    <div id="manyBanner"></div>
+  </div>
+
+  <!-- ---------- affiner ---------- -->
+  <div class="refine hidden" id="refine">
+    <span class="lbl">Show me the ones that differ mostly in</span>
+    <div class="pills" id="pills"></div>
+    <div class="avoidbox">
+      <div class="slot" id="avoidSlot">
+        <div class="empty2">
+          No counter-example. Open any result below and press
+          <b>“Less like this”</b> to steer the search away from it.
+        </div>
+      </div>
+      <div class="strength hidden" id="avoidStrengthWrap">
+        <span>Avoid</span>
+        <input type="range" id="f_avoid" min="0" max="0.75" step="0.05" value="0.3">
+        <span id="avoidOut">0.30</span>
+      </div>
+      <button class="drop hidden" id="avoidDrop">Remove</button>
+    </div>
+  </div>
+
+  <div class="panels hidden" id="panels">
+    <details class="card" id="panelW">
+      <summary>
+        <span class="caret">▼</span>
+        <span class="lbl">Weights</span>
+        <span class="sum" id="sumW">all even</span>
+        <button class="rst" id="rstW" type="button">reset</button>
+      </summary>
+      <div class="inner">
+        <div id="weights"></div>
+        <div class="hint">
+          What “similar” means to you. Raise a group to make it matter more.
+        </div>
+      </div>
+    </details>
+
+    <details class="card" id="panelF">
+      <summary>
+        <span class="caret">▼</span>
+        <span class="lbl">Filters</span>
+        <span class="sum" id="sumF">default</span>
+        <button class="rst" id="rstF" type="button">reset</button>
+      </summary>
+      <div class="inner">
+        <div class="row">
+          <label title="How many recommendations to return.">Results</label>
+          <input type="range" id="f_k" min="5" max="50" step="5" value="20">
+          <output id="of_k">20</output>
+        </div>
+        <div class="row">
+          <label title="How far the result may sit from the query, in stars.">Star range</label>
+          <input type="range" id="f_star" min="0" max="3" step="0.1" value="0.5">
+          <output id="of_star">±0.5</output>
+        </div>
+        <div class="row">
+          <label title="Shortest result, as a fraction of the query's length.">Min length</label>
+          <input type="range" id="f_lmin" min="0.1" max="1" step="0.05" value="0.5">
+          <output id="of_lmin">0.5×</output>
+        </div>
+        <div class="row">
+          <label title="Longest result, as a multiple of the query's length.">Max length</label>
+          <input type="range" id="f_lmax" min="1" max="5" step="0.25" value="2">
+          <output id="of_lmax">2.0×</output>
+        </div>
+        <div class="selectline">
+          <label title="Stay close on everything except one group, then rank by how far apart that group is.">Diverge on</label>
+          <select id="f_div"><option value="">nothing</option></select>
+        </div>
+        <div class="selectline">
+          <label title="Which mod-adjusted corpus to search.">Corpus</label>
+          <select id="f_variant"><option value="">nomod</option></select>
+        </div>
+        <label class="checkline">
+          <input type="checkbox" id="f_set" checked>
+          Skip other difficulties of the same mapset
+        </label>
+        <label class="checkline">
+          <input type="checkbox" id="f_song" checked>
+          One difficulty per song
+        </label>
+        <label class="checkline">
+          <input type="checkbox" id="f_unranked" checked>
+          Include heavily-played unranked maps
+        </label>
+      </div>
+    </details>
+  </div>
+
+  <div id="warnings"></div>
+  <div class="listhead hidden" id="listTitle">Recommendations</div>
+  <div id="results"></div>
+
+  <div class="foot">
+    Structural recommendations: every map is reduced to 96 numbers describing
+    its geometry and rhythm, and neighbours are found in that space. Popularity
+    plays no part.
+    <a href="https://github.com/Ayreth/OsuMapMatcher" target="_blank" rel="noopener">Source</a>.
+  </div>
+</div>
+
+<script>
+/* ================= constantes partagees avec l'overlay ================= */
+
+const GROUPS = [
+  ["aim", "Aim", "var(--g-aim)",
+   "Cursor movement: how far and how sharply you have to move between objects, "
+   + "how much the aim load spikes, and how much of it sits on sliders."],
+  ["speed", "Speed", "var(--g-speed)",
+   "Tapping: stream density, sustained finger speed, and how the tapping load "
+   + "is spread across the map rather than packed into one section."],
+  ["rhythm", "Rhythm", "var(--g-rhythm)",
+   "Timing feel: BPM and BPM changes, the gaps between objects, and how much "
+   + "of the map is streamed versus spaced out."],
+  ["spacing", "Spacing", "var(--g-spacing)",
+   "Raw geometry: distances between objects relative to circle size, the "
+   + "angles they form, and the cursor velocity the patterns demand."],
+  ["parameters", "Parameters", "var(--g-parameters)",
+   "Map settings and shape: CS, AR, OD, HP, slider ratio, object count, "
+   + "length, break time and overall density."],
+];
+const GROUP_LABEL = Object.fromEntries(GROUPS.map(([k, l]) => [k, l]));
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fmtTime = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
+
+const DEFAULT_API = "https://api.ayreth.site";
+const LOCAL_API = "http://127.0.0.1:8000";
+const HOST = { api: "", onLocal: false, variants: ["nomod"], supports: [] };
+
+/* Les parametres d'ARRIVEE, lus une fois. `syncUrl` reecrit l'URL des le
+   premier changement de mode, donc relire `location.search` plus tard rendrait
+   une chaine vide -- et le lien partage serait perdu avant d'avoir servi. */
+const INITIAL = new URLSearchParams(location.search);
+
+let mode = "";           // "one" | "many", vide avant le premier setMode
+let one = null;          // la map resolue du mode 1
+let seeds = [];          // les graines du mode 2
+let avoid = null;        // le contre-exemple
+let groupFilter = "";
+let searchToken = 0;
+let lastPayload = null;
+
+/* ================= lecture d'un lien osu! ================= */
+
+/* Les formes qu'un joueur peut coller. L'ordre compte : un lien de beatmapset
+   porte DEUX nombres, celui du set et celui de la difficulte, et c'est le
+   second qu'on veut -- prendre le premier donnerait une autre map du meme set,
+   ce qui a l'air de marcher et ne marche pas. */
+function parseRef(raw) {
+  const text = String(raw || "").trim();
+  if (!text) return { error: "Paste a link or an id first." };
+
+  if (/^[0-9a-f]{32}$/i.test(text)) {
+    return { checksum: text.toLowerCase(), key: text.toLowerCase() };
+  }
+  if (/^\d+$/.test(text)) {
+    return { beatmap_id: Number(text), key: text };
+  }
+  // .../beatmapsets/41823#osu/131891 -- la difficulte est apres le diese
+  const anchored = text.match(/#(?:osu|taiko|fruits|mania)\/(\d+)/i);
+  if (anchored) return { beatmap_id: Number(anchored[1]), key: anchored[1] };
+
+  const direct = text.match(/osu\.ppy\.sh\/(?:b|beatmaps)\/(\d+)/i);
+  if (direct) return { beatmap_id: Number(direct[1]), key: direct[1] };
+
+  const protocol = text.match(/^osu:\/\/b\/(\d+)/i);
+  if (protocol) return { beatmap_id: Number(protocol[1]), key: protocol[1] };
+
+  // un lien de set sans difficulte : on ne peut pas deviner laquelle
+  if (/osu\.ppy\.sh\/beatmapsets\/\d+/i.test(text)) {
+    return {
+      error: "That link points to a mapset, not to one difficulty. Open the "
+           + "difficulty you mean and copy the link again.",
+    };
+  }
+  return { error: "That does not look like an osu! beatmap link or id." };
+}
+
+/* ================= quel serveur repond ? ================= */
+
+async function askMeta(url) {
+  const stop = new AbortController();
+  const timer = setTimeout(() => stop.abort(), 2000);
+  try {
+    const response = await fetch(url + "/api/v1/meta", { signal: stop.signal });
+    return response.ok ? await response.json() : null;
+  } catch (err) {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/* La machine de l'utilisateur d'abord, exactement comme l'overlay.
+
+   La page est servie par le serveur local ET par l'API hebergee, donc sa propre
+   origine est le premier candidat : c'est ce qui la fait marcher hors ligne
+   sans dependre du port 8000. Un serveur local sans index repond /meta mais ne
+   sait rien chercher, d'ou le test sur `variants`. */
+async function pickApi() {
+  const forced = INITIAL.get("api");
+  if (forced) {
+    HOST.api = forced.replace(/\/$/, "");
+    HOST.onLocal = /^https?:\/\/(localhost|127\.0\.0\.1)/.test(HOST.api);
+    return askMeta(HOST.api);
+  }
+  const candidates = [];
+  if (location.protocol.startsWith("http")) candidates.push(location.origin);
+  if (!candidates.includes(LOCAL_API)) candidates.push(LOCAL_API);
+
+  for (const url of candidates) {
+    const meta = await askMeta(url);
+    if (meta && (meta.variants || []).length) {
+      HOST.api = url;
+      HOST.onLocal = /^https?:\/\/(localhost|127\.0\.0\.1)/.test(url);
+      return meta;
+    }
+  }
+  HOST.api = DEFAULT_API;
+  HOST.onLocal = false;
+  return askMeta(HOST.api);
+}
+
+function showHost(meta) {
+  const short = HOST.api.replace(/^https?:\/\//, "");
+  $("engineText").textContent = HOST.onLocal ? "this machine — " + short : short;
+  $("engine").title = `Search runs on ${HOST.api}`;
+  $("dot").className = "dot" + (meta ? " on" : " bad");
+  if (!meta) {
+    $("engine").classList.add("warn");
+    $("engineText").textContent = "no server reachable";
+    $("corpus").textContent = "";
+    return;
+  }
+  HOST.variants = meta.variants || ["nomod"];
+  HOST.supports = meta.supports || [];
+  const n = (meta.n_maps || {})[HOST.variants[0]] || 0;
+  $("corpus").textContent = n ? `${Intl.NumberFormat().format(n)} maps` : "";
+
+  $("f_variant").innerHTML = HOST.variants
+    .map((v) => `<option value="${v === "nomod" ? "" : v}">${v}</option>`).join("");
+
+  // Un serveur plus ancien que cette page ne connait pas /similar/multi. Mieux
+  // vaut le dire et fermer le mode que de laisser cliquer sur un 404.
+  if (!HOST.supports.includes("multi")) {
+    $("modeMany").disabled = true;
+    $("modeMany").title = "This server does not support multi-map search yet.";
+  }
+  if (!HOST.supports.includes("group_filter")) $("pills").classList.add("hidden");
+}
+
+/* ================= reglages ================= */
+
+for (const [key, label, color, help] of GROUPS) {
+  const row = document.createElement("div");
+  row.className = "row";
+  row.innerHTML =
+    `<label title="${help}"><i class="swatch" style="background:${color}"></i>${label}</label>` +
+    `<input type="range" id="w_${key}" min="0" max="2" step="0.1" value="1" title="${help}">` +
+    `<output id="ow_${key}">1.0</output>`;
+  $("weights").appendChild(row);
+  $("f_div").insertAdjacentHTML("beforeend", `<option value="${key}">${label}</option>`);
+  $("pills").insertAdjacentHTML("beforeend",
+    `<button class="pill" data-group="${key}" aria-pressed="false">` +
+    `<i class="swatch" style="background:${color}"></i>${label}</button>`);
+}
+$("pills").insertAdjacentHTML("afterbegin",
+  `<button class="pill" data-group="" aria-pressed="true">Anything</button>`);
+
+function syncLabels() {
+  $("of_k").textContent = $("f_k").value;
+  $("of_star").textContent = "±" + Number($("f_star").value).toFixed(1);
+  $("of_lmin").textContent = Number($("f_lmin").value).toFixed(2) + "×";
+  $("of_lmax").textContent = Number($("f_lmax").value).toFixed(2) + "×";
+  $("avoidOut").textContent = Number($("f_avoid").value).toFixed(2);
+  const moved = [];
+  for (const [key, label] of GROUPS) {
+    const value = Number($(`w_${key}`).value);
+    $(`ow_${key}`).textContent = value.toFixed(1);
+    if (value !== 1) moved.push(`${label} ${value.toFixed(1)}`);
+  }
+  $("sumW").textContent = moved.length ? moved.join(" · ") : "all even";
+  $("sumW").classList.toggle("on", moved.length > 0);
+
+  const bits = [`${$("f_k").value} results`, `±${Number($("f_star").value).toFixed(1)}★`];
+  if ($("f_div").value) bits.push("diverge " + GROUP_LABEL[$("f_div").value]);
+  if ($("f_variant").value) bits.push($("f_variant").value);
+  if (!$("f_unranked").checked) bits.push("ranked only");
+  $("sumF").textContent = bits.join(" · ");
+}
+
+function collectOptions() {
+  return {
+    k: Number($("f_k").value),
+    star_range: Number($("f_star").value),
+    length_min: Number($("f_lmin").value),
+    length_max: Number($("f_lmax").value),
+    exclude_same_set: $("f_set").checked,
+    max_per_song: $("f_song").checked ? 1 : 0,
+    allow_unranked: $("f_unranked").checked,
+    diverge: $("f_div").value || null,
+    variant: $("f_variant").value || null,
+    group_filter: groupFilter || null,
+    avoid_checksum: avoid ? (avoid.checksum || null) : null,
+    avoid_beatmap_id: avoid && !avoid.checksum ? avoid.beatmap_id : null,
+    avoid_strength: Number($("f_avoid").value),
+    weights: Object.fromEntries(GROUPS.map(([k]) => [k, Number($(`w_${k}`).value)])),
+  };
+}
+
+/* Le meme objet, en query string : les poids se prefixent, le reste passe tel
+   quel, et ce qui est nul n'est pas envoye du tout -- une valeur vide serait
+   lue comme une chaine par le serveur. */
+function toQuery(options) {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(options)) {
+    if (key === "weights") {
+      for (const [group, weight] of Object.entries(value)) params.set("w_" + group, weight);
+    } else if (value !== null && value !== "") {
+      params.set(key, value);
+    }
+  }
+  return params;
+}
+
+/* ================= mode ================= */
+
+function setMode(next) {
+  if (next === "many" && $("modeMany").disabled) return;
+  if (mode === next) return;
+  mode = next;
+  $("modeOne").setAttribute("aria-pressed", String(next === "one"));
+  $("modeMany").setAttribute("aria-pressed", String(next === "many"));
+  $("viewOne").classList.toggle("hidden", next !== "one");
+  $("viewMany").classList.toggle("hidden", next !== "many");
+  $("modeNote").textContent = next === "one"
+    ? "One map in, twenty maps out. Everything below refines that list."
+    : "Several maps in. The search runs from their average, which is why the "
+      + "results can resemble the set without resembling any single one.";
+  // les resultats appartiennent au mode qui les a demandes
+  resetRefinements();
+  clearResults();
+  syncUrl();
+}
+
+/* Un contre-exemple et un filtre de groupe appartiennent a UNE recherche.
+
+   Les garder d'un mode a l'autre laissait une contrainte agir alors que le
+   panneau qui la montre est cache pendant qu'on compose sa liste : les
+   resultats etaient filtres par quelque chose d'invisible. Vu en testant. */
+function resetRefinements() {
+  avoid = null;
+  groupFilter = "";
+  renderAvoid();
+  for (const pill of $("pills").querySelectorAll(".pill")) {
+    pill.setAttribute("aria-pressed", String(pill.dataset.group === ""));
+  }
+}
+
+function clearResults() {
+  lastPayload = null;
+  $("results").innerHTML = "";
+  $("warnings").innerHTML = "";
+  $("listTitle").classList.add("hidden");
+  $("refine").classList.add("hidden");
+  $("panels").classList.add("hidden");
+}
+
+/* ================= mode 1 ================= */
+
+async function submitOne() {
+  const ref = parseRef($("oneInput").value);
+  $("oneErr").classList.toggle("hidden", !ref.error);
+  if (ref.error) { $("oneErr").textContent = ref.error; return; }
+  $("oneErr").classList.add("hidden");
+  one = ref;
+  syncUrl();
+  await runSearch();
+}
+
+/* ================= mode 2 ================= */
+
+async function addSeed(raw, quiet) {
+  const ref = parseRef(raw);
+  if (ref.error) {
+    if (!quiet) { $("manyErr").textContent = ref.error; $("manyErr").classList.remove("hidden"); }
+    return false;
+  }
+  if (seeds.some((s) => s.key === ref.key)) {
+    $("manyErr").textContent = "That map is already in the list.";
+    $("manyErr").classList.remove("hidden");
+    return false;
+  }
+  // On resout tout de suite : une liste de numeros ne dit rien a personne, et
+  // une map absente du corpus doit se voir maintenant, pas au moment de chercher.
+  const found = await resolveMap(ref.key);
+  if (!found) {
+    $("manyErr").textContent =
+      `Not in the corpus: ${esc(ref.key)}. Only published maps can be used.`;
+    $("manyErr").classList.remove("hidden");
+    return false;
+  }
+  // Deuxieme controle, sur le checksum : la meme map peut etre designee par son
+  // id ou par son md5, et les deux ecritures ne se ressemblent pas. Le serveur
+  // dedoublonnerait de toute facon, mais en avertissant apres coup.
+  if (seeds.some((s) => s.checksum === found.checksum)) {
+    $("manyErr").textContent = "That map is already in the list.";
+    $("manyErr").classList.remove("hidden");
+    return false;
+  }
+  $("manyErr").classList.add("hidden");
+  seeds.push({ ...ref, ...found });
+  renderSeeds();
+  syncUrl();
+  return true;
+}
+
+async function resolveMap(key) {
+  try {
+    const response = await fetch(
+      `${HOST.api}/api/v1/map/${encodeURIComponent(key)}` +
+      ($("f_variant").value ? `?variant=${$("f_variant").value}` : ""));
+    return response.ok ? await response.json() : null;
+  } catch (err) {
+    return null;
+  }
+}
+
+function coverFor(beatmapsetId) {
+  return beatmapsetId
+    ? `https://assets.ppy.sh/beatmaps/${beatmapsetId}/covers/list@2x.jpg` : "";
+}
+
+function renderSeeds() {
+  if (!seeds.length) {
+    $("seedList").innerHTML =
+      `<div class="seedsempty">No map yet. Add at least two for the average to mean anything.</div>`;
+  } else {
+    $("seedList").innerHTML = `<div class="seeds">` + seeds.map((s, i) => {
+      const cover = coverFor(s.beatmapset_id);
+      return `<div class="seed">
+        <div class="sthumb">${cover
+          ? `<img src="${cover}" alt="" loading="lazy" onload="this.classList.add('ready')" onerror="this.remove()">`
+          : ""}</div>
+        <div>
+          <div class="sname">${esc(s.label || s.key)}</div>
+          <div class="ssub">${fmtTime(s.length_s || 0)} · ${Math.round(s.bpm || 0)} BPM</div>
+        </div>
+        <div class="sstars">${Number(s.stars || 0).toFixed(2)}★</div>
+        <button class="drop" data-drop="${i}" title="Remove">×</button>
+      </div>`;
+    }).join("") + `</div>`;
+    for (const button of $("seedList").querySelectorAll("[data-drop]")) {
+      button.addEventListener("click", () => {
+        seeds.splice(Number(button.dataset.drop), 1);
+        renderSeeds();
+        syncUrl();
+      });
+    }
+  }
+  $("manyGo").disabled = seeds.length === 0;
+  const spread = seeds.length > 1
+    ? Math.max(...seeds.map((s) => s.stars)) - Math.min(...seeds.map((s) => s.stars))
+    : 0;
+  $("seedCount").textContent = seeds.length
+    ? `${seeds.length} map${seeds.length > 1 ? "s" : ""}` +
+      (spread > 2 ? ` · spread over ${spread.toFixed(1)}★` : "")
+    : "";
+}
+
+/* ================= recherche ================= */
+
+async function runSearch() {
+  const token = ++searchToken;
+  const options = collectOptions();
+  $("results").innerHTML = `<div class="empty">Searching…</div>`;
+  $("listTitle").classList.add("hidden");
+
+  let response;
+  try {
+    if (mode === "one") {
+      if (!one) return;
+      const url = new URL(HOST.api + "/api/v1/similar");
+      toQuery(options).forEach((value, key) => url.searchParams.set(key, value));
+      if (one.checksum) url.searchParams.set("checksum", one.checksum);
+      else url.searchParams.set("beatmap_id", one.beatmap_id);
+      response = await fetch(url, { headers: { Accept: "application/json" } });
+    } else {
+      if (!seeds.length) return;
+      response = await fetch(HOST.api + "/api/v1/similar/multi", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...options,
+          checksums: seeds.filter((s) => s.checksum).map((s) => s.checksum),
+          beatmap_ids: seeds.filter((s) => !s.checksum).map((s) => s.beatmap_id),
+        }),
+      });
+    }
+  } catch (err) {
+    if (token === searchToken) fail(`Cannot reach ${esc(HOST.api)}.`);
+    return;
+  }
+  if (token !== searchToken) return;   // une requete plus recente est partie
+
+  if (!response.ok) {
+    const detail = await response.json().catch(() => ({}));
+    let message = detail.detail || response.statusText;
+    if (Array.isArray(message)) message = message.map((d) => d.msg).join(", ");
+    fail(esc(message));
+    return;
+  }
+  const data = await response.json();
+  if (token !== searchToken) return;
+  lastPayload = data;
+  render(data);
+}
+
+function fail(message) {
+  $("results").innerHTML = `<div class="empty">${message}</div>`;
+  $("listTitle").classList.add("hidden");
+}
+
+/* ================= rendu ================= */
+
+const STATUS_ICON = {
+  ranked: {
+    path: "M8 2.6l1.9 3.9 4.3.6-3.1 3 .7 4.3L8 12.4 4.2 14.4l.7-4.3-3.1-3 4.3-.6z",
+    label: "Ranked",
+  },
+  loved: {
+    path: "M8 14s-5.5-3.4-5.5-7A3 3 0 018 5.2 3 3 0 0113.5 7c0 3.6-5.5 7-5.5 7z",
+    label: "Loved",
+  },
+  graveyard: {
+    path: "M8 1.5a4 4 0 00-4 4V14h8V5.5a4 4 0 00-4-4zM6.6 5.2h2.8M8 4v4.2",
+    label: "Graveyard", stroke: true,
+  },
+  pending: {
+    path: "M8 1.6a6.4 6.4 0 100 12.8A6.4 6.4 0 008 1.6zM8 4.4v3.9l2.6 1.6",
+    label: "Pending", stroke: true,
+  },
+};
+STATUS_ICON.wip = STATUS_ICON.pending;
+STATUS_ICON.approved = STATUS_ICON.ranked;
+
+function statusTag(m) {
+  const icon = STATUS_ICON[m.status];
+  if (!icon) return "";              // `dump` : statut inconnu, on se tait
+  const plays = m.playcount ? ` — ${Intl.NumberFormat().format(m.playcount)} plays` : "";
+  const note = m.is_unranked
+    ? `${icon.label}${plays}. Not ranked: in the pool because it is heavily `
+      + `played, and it may not import the usual way.`
+    : `${icon.label}${plays}`;
+  const drawing = icon.stroke
+    ? `<path d="${icon.path}" fill="none" stroke="currentColor" stroke-width="1.4" `
+      + `stroke-linecap="round" stroke-linejoin="round"/>`
+    : `<path d="${icon.path}" fill="currentColor"/>`;
+  return `<span class="sicon ${esc(m.status)}" title="${esc(note)}" aria-label="${esc(icon.label)}">`
+    + `<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">${drawing}</svg></span>`;
+}
+
+function renderBanner(query) {
+  const target = mode === "one" ? $("oneBanner") : $("manyBanner");
+  if (mode === "one") $("manyBanner").innerHTML = "";
+  else $("oneBanner").innerHTML = "";
+
+  const cover = coverFor(query.seeds && query.seeds.length === 1
+    ? query.seeds[0].beatmapset_id : 0);
+  target.innerHTML = `<div class="qbanner ${query.is_centroid ? "centroid" : ""}">
+    <div class="who">
+      <div class="eyebrow">${query.is_centroid
+        ? `Average of ${query.n_seeds} maps` : "Searching from"}</div>
+      <div class="title">${esc(query.label)}</div>
+      <div class="meta">${query.is_centroid
+        ? `spanning ${query.star_span[0].toFixed(2)}★ to ${query.star_span[1].toFixed(2)}★`
+        : `${fmtTime(query.length_s)} · ${Math.round(query.bpm)} BPM`}</div>
+    </div>
+    <div class="chips">
+      <span class="chip"><b>${Number(query.stars).toFixed(2)}★</b></span>
+      ${query.is_centroid ? "" :
+        `<span class="chip">${Math.round(query.bpm)} BPM</span>
+         <span class="chip">${fmtTime(query.length_s)}</span>`}
+    </div>
+  </div>`;
+}
+
+function render(data) {
+  renderBanner(data.query);
+  $("refine").classList.remove("hidden");
+  $("panels").classList.remove("hidden");
+
+  const notes = (data.warnings || []).map(
+    (w) => `<div class="notice warn">${esc(w)}</div>`);
+  // Le point qui se perd le plus facilement : sur un centroide, les phrases
+  // d'explication comparent a la MOYENNE des graines, pas a une vraie map.
+  if (data.query.is_centroid) {
+    notes.push(`<div class="notice info">The differences listed under each
+      result compare it to the <b>average</b> of your ${data.query.n_seeds} maps,
+      not to any one of them. A value like “170 BPM” is that average.</div>`);
+  }
+  $("warnings").innerHTML = notes.join("");
+
+  const bits = [`${data.count} recommendation${data.count === 1 ? "" : "s"}`];
+  if (data.group_filter) bits.push(`differing mostly in ${GROUP_LABEL[data.group_filter]}`);
+  if (data.diverge) bits.push(`diverging on ${GROUP_LABEL[data.diverge]}`);
+  if (data.avoid) bits.push(`away from ${data.avoid.label}`);
+  if (data.variant && data.variant !== "nomod") bits.push(`${data.variant} corpus`);
+  $("listTitle").textContent = bits.join(" · ");
+  $("listTitle").classList.remove("hidden");
+
+  if (!data.matches.length) {
+    $("results").innerHTML = `<div class="empty">
+      No candidate left. Widen the star range, or pick a different group above.</div>`;
+    return;
+  }
+
+  const versus = data.query.is_centroid ? "vs. your average" : "";
+  $("results").innerHTML = data.matches.map((m) => {
+    const bar = GROUPS.map(([key, label, color]) =>
+      `<i style="flex:${(m.group_share[key] || 0).toFixed(4)} 0 0;background:${color}" `
+      + `title="${label} ${Math.round(100 * (m.group_share[key] || 0))}%"></i>`).join("");
+    const keys = GROUPS.map(([key, label, color]) =>
+      `<span><i class="swatch" style="background:${color}"></i>${label} `
+      + `${Math.round(100 * (m.group_share[key] || 0))}%</span>`).join("");
+    const why = m.differences.map((d) => `<em>${esc(d)}</em>`).join(" · ")
+      + (m.differences.length && m.similarities.length ? " · " : "")
+      + m.similarities.map((s) => `<s>${esc(s)}</s>`).join(" · ");
+
+    return `<div class="hit" data-checksum="${m.checksum}">
+      <div class="head">
+        <div class="thumb">
+          ${m.url_cover ? `<img src="${m.url_cover}" alt="" loading="lazy"
+             onload="this.classList.add('ready')" onerror="this.remove()">` : ""}
+          <span class="rank">${m.rank}</span>
+        </div>
+        <div class="body">
+          <div class="name">${statusTag(m)}${esc(m.artist)} - ${esc(m.title)}</div>
+          <div class="diff">[${esc(m.version)}] <b>· ${esc(m.creator)}</b></div>
+          <div class="actions">
+            <a class="btn direct" href="${m.url_direct}" title="Import into osu!">
+              osu!direct <span>⤓</span></a>
+            <a class="btn info" href="${m.url_web}" target="_blank" rel="noopener">
+              More Info <span>↗</span></a>
+          </div>
+        </div>
+        <div class="stats">
+          <div class="stat sr"><div class="v">${m.stars.toFixed(2)}★</div><div class="k">Stars</div></div>
+          <div class="stat"><div class="v">${Math.round(m.bpm)}</div><div class="k">BPM</div></div>
+          <div class="stat"><div class="v">${fmtTime(m.length_s)}</div><div class="k">Length</div></div>
+          <div class="stat sim"><div class="v">${Math.round(100 * m.similarity)}%</div><div class="k">Match</div></div>
+        </div>
+        <button class="chev" title="Why this map?">⌄</button>
+      </div>
+      <div class="detail">
+        <div class="barwrap">
+          <div class="bar">${bar}</div>
+          <span class="dist">distance ${m.distance.toFixed(2)}</span>
+        </div>
+        <div class="keys">${keys}</div>
+        <div class="why">${why || "No notable difference."}
+          ${why && versus ? `<span class="versus"> — ${versus}</span>` : ""}</div>
+        <div class="actions">
+          <button class="btn pivot" data-pivot="1">⌖ Find maps like this one</button>
+          <button class="btn less" data-less="1">⊘ Less like this</button>
+          <button class="btn add" data-add="1">+ Add to my list</button>
+        </div>
+      </div>
+    </div>`;
+  }).join("");
+
+  const byChecksum = Object.fromEntries(data.matches.map((m) => [m.checksum, m]));
+  for (const card of document.querySelectorAll(".hit")) {
+    card.addEventListener("click", (event) => {
+      if (event.target.closest("a")) return;
+      const match = byChecksum[card.dataset.checksum];
+      if (event.target.closest("[data-pivot]")) {
+        setMode("one");
+        // l'id plutot que le md5 : c'est ce qui finit dans l'URL partagee
+        one = { beatmap_id: match.beatmap_id, key: String(match.beatmap_id) };
+        $("oneInput").value = String(match.beatmap_id);
+        window.scrollTo({ top: 0, behavior: "smooth" });
+        syncUrl();
+        runSearch();
+        return;
+      }
+      if (event.target.closest("[data-less]")) {
+        avoid = {
+          checksum: match.checksum, beatmap_id: match.beatmap_id,
+          label: `${match.artist} - ${match.title} [${match.version}]`,
+        };
+        renderAvoid();
+        runSearch();
+        return;
+      }
+      if (event.target.closest("[data-add]")) {
+        addResultToSeeds(match);
+        return;
+      }
+      card.classList.toggle("open");
+    });
+  }
+}
+
+/* "Ajouter a ma liste" depuis un resultat : on a deja toutes ses metadonnees,
+   inutile de redemander au serveur ce qu'il vient de nous envoyer. */
+function addResultToSeeds(match) {
+  if (seeds.some((s) => s.checksum === match.checksum)) {
+    setMode("many");
+    return;
+  }
+  seeds.push({
+    key: String(match.beatmap_id), checksum: match.checksum,
+    beatmap_id: match.beatmap_id,
+    beatmapset_id: match.beatmapset_id, stars: match.stars, bpm: match.bpm,
+    length_s: match.length_s,
+    label: `${match.artist} - ${match.title} [${match.version}]`,
+  });
+  setMode("many");
+  renderSeeds();
+  // setMode ne fait rien si on y etait deja, donc l'URL ne se serait pas mise
+  // a jour toute seule -- et le lien partage aurait oublie la map ajoutee
+  syncUrl();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function renderAvoid() {
+  const filled = Boolean(avoid);
+  $("avoidSlot").innerHTML = filled
+    ? `<div class="filled">Steering away from <b>${esc(avoid.label)}</b></div>`
+    : `<div class="empty2">No counter-example. Open any result below and press
+       <b>“Less like this”</b> to steer the search away from it.</div>`;
+  $("avoidDrop").classList.toggle("hidden", !filled);
+  $("avoidStrengthWrap").classList.toggle("hidden", !filled);
+}
+
+/* ================= URL partageable ================= */
+
+/* Une recherche doit pouvoir se recopier a quelqu'un. On n'ecrit que ce qui
+   identifie la question, pas les reglages : un lien qui trimballe quinze
+   parametres n'est plus un lien qu'on colle dans un chat. */
+function syncUrl() {
+  const params = new URLSearchParams();
+  if (mode === "one" && one) params.set("b", one.key);
+  if (mode === "many" && seeds.length) params.set("ids", seeds.map((s) => s.key).join(","));
+  const forced = INITIAL.get("api");
+  if (forced) params.set("api", forced);
+  const query = params.toString();
+  history.replaceState(null, "", query ? "?" + query : location.pathname);
+}
+
+async function readUrl() {
+  const many = INITIAL.get("ids");
+  if (many) {
+    setMode("many");
+    for (const key of many.split(",").slice(0, 20)) await addSeed(key, true);
+    if (seeds.length) await runSearch();
+    return true;
+  }
+  const single = INITIAL.get("b");
+  if (single) {
+    $("oneInput").value = single;
+    await submitOne();
+    return true;
+  }
+  return false;
+}
+
+/* ================= branchements ================= */
+
+$("modeOne").addEventListener("click", () => setMode("one"));
+$("modeMany").addEventListener("click", () => setMode("many"));
+
+$("oneGo").addEventListener("click", submitOne);
+$("oneInput").addEventListener("keydown", (e) => { if (e.key === "Enter") submitOne(); });
+
+$("manyAdd").addEventListener("click", async () => {
+  if (await addSeed($("manyInput").value)) $("manyInput").value = "";
+});
+$("manyInput").addEventListener("keydown", async (e) => {
+  if (e.key !== "Enter") return;
+  if (await addSeed($("manyInput").value)) $("manyInput").value = "";
+});
+$("manyGo").addEventListener("click", runSearch);
+$("manyClear").addEventListener("click", () => {
+  seeds = []; renderSeeds(); resetRefinements(); clearResults(); syncUrl();
+});
+
+$("pills").addEventListener("click", (event) => {
+  const pill = event.target.closest(".pill");
+  if (!pill) return;
+  groupFilter = pill.dataset.group;
+  for (const other of $("pills").querySelectorAll(".pill")) {
+    other.setAttribute("aria-pressed", String(other === pill));
+  }
+  if (lastPayload) runSearch();
+});
+
+$("avoidDrop").addEventListener("click", () => {
+  avoid = null; renderAvoid(); if (lastPayload) runSearch();
+});
+$("f_avoid").addEventListener("input", syncLabels);
+$("f_avoid").addEventListener("change", () => { if (avoid && lastPayload) runSearch(); });
+
+for (const input of document.querySelectorAll(
+  "#panelW input, #panelF input, #panelF select")) {
+  input.addEventListener("input", syncLabels);
+  input.addEventListener("change", () => { if (lastPayload) runSearch(); });
+}
+$("rstW").addEventListener("click", (event) => {
+  event.preventDefault();
+  for (const [key] of GROUPS) $(`w_${key}`).value = 1;
+  syncLabels();
+  if (lastPayload) runSearch();
+});
+$("rstF").addEventListener("click", (event) => {
+  event.preventDefault();
+  const defaults = { f_k: 20, f_star: 0.5, f_lmin: 0.5, f_lmax: 2 };
+  for (const [id, value] of Object.entries(defaults)) $(id).value = value;
+  $("f_div").value = ""; $("f_variant").value = "";
+  $("f_set").checked = true; $("f_song").checked = true; $("f_unranked").checked = true;
+  syncLabels();
+  if (lastPayload) runSearch();
+});
+
+/* ================= demarrage ================= */
+
+(async function start() {
+  syncLabels();
+  renderSeeds();
+  renderAvoid();
+  setMode("one");
+  const meta = await pickApi();
+  showHost(meta);
+  if (meta) await readUrl();
+  $("oneInput").focus();
+})();
+</script>
+</body>
+</html>
