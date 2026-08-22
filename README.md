@@ -5,9 +5,17 @@
 **Find the osu! maps that actually play like the one you have selected.**
 Pick a map in song select, and this tool shows you the most structurally similar
 maps out of 151,558 ranked and loved beatmaps — updating live, on your second
-screen, with no account. The search runs on a hosted instance by default, so
-there is nothing to download; it can also run entirely on your own machine,
-offline, if you prefer.
+screen, with no account.
+
+> ### 🡒 Just want it in your game?
+>
+> Go to **[OsuMapMatcher-overlay](https://github.com/Ayreth/OsuMapMatcher-overlay)**.
+> One folder to drop into tosu, nothing to install, running in a minute.
+>
+> **This repository is the whole project**: the engine, the beatmap index, the
+> API you can host yourself, and `start.bat` to run all of it on your own
+> machine, offline. Come here if you want to run it yourself, host it for
+> others, or read how it works.
 
 ![The recommendation list, updating live as you browse song select](docs/ui-overview.png)
 
@@ -75,15 +83,16 @@ Mods are handled: turn on DT, HR, DTHR or HT in osu! and the tool switches to a
 corpus computed with those mods, so a 7★ map played at 1.5× is compared against
 other maps at 1.5×.
 
-## Two ways to run it
+## What is in this repository
 
-**As a tosu counter** — a folder to drop into tosu, no Python, no launcher,
-nothing to install. Works on any OS tosu runs on. See
-[Use it as a tosu counter](#use-it-as-a-tosu-counter).
-
-**As the desktop tool** — `start.bat`, a small local server, and the option to
-search entirely offline against your own index. Everything below describes
-this one.
+| | |
+|---|---|
+| `src/osumapmatcher/` | the engine: featurisation, index, search, local server, API |
+| `scripts/` | build an index from a beatmap dump, pack a release, build the overlay |
+| `deploy/` | Dockerfile, compose, systemd unit, reverse proxy examples |
+| `docs/` | [the HTTP API](docs/API.md), [the handoff](docs/HANDOFF.md) |
+| `counter/osu-mapmatcher/` | the overlay, generated from the page — published in [its own repository](https://github.com/Ayreth/OsuMapMatcher-overlay) |
+| `start.bat` | one click: installs what is needed, then runs everything locally |
 
 ## Requirements
 
@@ -140,11 +149,17 @@ start.bat --api ""                             # never touch the network
 
 `OSUMAPMATCHER_API_URL` and `OSUMAPMATCHER_MODE` do the same thing through the environment.
 
-## Use it as a tosu counter
+## The tosu overlay
 
 The same interface, served by tosu itself. No Python, no `start.bat`, no index:
 the page talks to tosu's websocket for the current map and to the hosted API for
 the search.
+
+Players get it from
+**[OsuMapMatcher-overlay](https://github.com/Ayreth/OsuMapMatcher-overlay)** —
+a repository that contains nothing else, so *Download ZIP* gives them exactly
+what they need. The copy here, in `counter/osu-mapmatcher/`, is the source it is
+published from:
 
 1. Copy `counter/osu-mapmatcher/` into tosu's `static/` folder.
 2. Open `http://127.0.0.1:24050/osu-mapmatcher/`, or pick it in tosu's
@@ -168,9 +183,14 @@ python scripts/pack_counter.py --api https://your.server --install
 
 `--install` copies it straight into tosu if tosu sits next to this repository.
 
-The counter and the desktop page are **the same file**: `pack_counter.py`
+The overlay and the desktop page are **the same file**: `pack_counter.py`
 generates one from the other, so there is no second interface drifting out of
-sync (a test fails if the shipped counter no longer matches the page).
+sync (a test fails if the shipped copy no longer matches the page). To refresh
+the published overlay repository:
+
+```bash
+python scripts/pack_counter.py --out ../OsuMapMatcher-overlay
+```
 
 ## Running it by hand
 

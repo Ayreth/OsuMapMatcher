@@ -20,10 +20,10 @@ User=osu-mapmatcher
 Group=osu-mapmatcher
 WorkingDirectory=/opt/osu-mapmatcher
 Environment=OSUMAPMATCHER_DATA=/var/lib/osu-mapmatcher
-Environment=OSURECO_API_VARIANTS=nomod
-Environment=OSURECO_API_CORS=*
-Environment=OSURECO_API_RATE=120
-Environment=OSURECO_API_TRUST_PROXY=1
+Environment=OSUMAPMATCHER_API_VARIANTS=nomod
+Environment=OSUMAPMATCHER_API_CORS=*
+Environment=OSUMAPMATCHER_API_RATE=120
+Environment=OSUMAPMATCHER_API_TRUST_PROXY=1
 # secrets et surcharges locales, absence toleree (le tiret)
 EnvironmentFile=-/etc/osu-mapmatcher/api.env
 ExecStart=/opt/osu-mapmatcher/.venv/bin/uvicorn osumapmatcher.api:app \
