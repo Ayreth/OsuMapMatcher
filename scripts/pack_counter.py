@@ -38,7 +38,10 @@ METADATA = {
     "author": "Ayreth",
     "resolution": [-1, -1],
     "authorLinks": ["https://github.com/Ayreth/OsuMapMatcher"],
-    "version": "1.0.0",
+    # tosu s'en sert pour proposer la mise a jour : sans montee de version, une
+    # nouveauté de l'overlay n'atteint personne. 1.1.0 = badge et filtre des
+    # maps non classees.
+    "version": "1.1.0",
 }
 
 
