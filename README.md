@@ -4,8 +4,8 @@
 
 **Find the osu! maps that actually play like the one you have selected.**
 Pick a map in song select, and this tool shows you the most structurally similar
-maps out of 151,558 ranked and loved beatmaps — updating live, on your second
-screen, with no account.
+maps out of 160,905 beatmaps — every ranked and loved map, plus the most-played
+unranked ones — updating live, on your second screen, with no account.
 
 > ### 🡒 Just want it in your game?
 >
