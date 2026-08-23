@@ -6,6 +6,67 @@ running than a number would.
 
 ---
 
+## 2026-08-23 — 32 000 maps de plus dans l'index
+
+L'index passe de 160 905 à **193 153 maps** (`nomod`). Ce qui entre : tout le
+graveyard au-dessus de 5 000 plays, entre 5,2 et 11 étoiles, dans des sets d'au
+plus dix difficultés. La version des features ne bouge pas — `8e824c8319c6` —
+donc aucun client n'a besoin d'être mis à jour.
+
+| | avant | après |
+|---|---|---|
+| `nomod` | 160 905 | 193 153 |
+| `DT` | 160 048 | 191 406 |
+| `HT` | 161 064 | 193 620 |
+| dont non classées | 9 347 | 41 595 |
+
+Mesuré sur 300 requêtes tirées au hasard dans la fenêtre 5,2-11 : **43,5 %** des
+recommandations viennent désormais de ce pool, réparties uniformément sur les
+dix premiers rangs, et le meilleur voisin est **13,9 % plus proche** qu'avec le
+ranked seul. Le pool ne fait donc pas que grossir la liste, il la resserre. En
+`DT` le gain est plus modeste (22,4 % et 7,1 %) : les étoiles filtrées sont
+celles sans mods, donc ces maps atterrissent dans le haut de la fenêtre DT.
+
+Sur 36 153 difficultés visées, 904 (2,5 %) n'ont pu être récupérées d'aucun
+mirror — du graveyard supprimé ou restreint — et 30 ont été rejetées pour md5
+discordant, ce qui est exactement le rôle de cette vérification : une entrée au
+mauvais checksum serait introuvable depuis le jeu.
+
+### Comment on décrit un pool
+
+`--sets N` prend les N sets les plus joués : on sait combien, pas où ça
+s'arrête. `--min-plays N` fait l'inverse et descend le classement jusqu'au
+seuil. Comme le tri est décroissant, la première page qui finit sous le seuil
+est la dernière à demander — 364 requêtes au lieu des ~2 000 qu'un balayage
+aveugle aurait coûtées. `--min-stars`, `--max-stars` et `--max-diffs` filtrent
+sur ce que la recherche a déjà renvoyé, donc une difficulté écartée ne coûte
+aucune requête de fichier.
+
+### Deux bugs silencieux corrigés en chemin
+
+**La reprise du corpus ignorait les fichiers ajoutés.** Elle est indexée par
+position : passer de 10 000 à 40 000 fichiers laisse toujours une seule tranche,
+la tranche 0, déjà marquée terminée, donc réutilisée telle quelle. Les 30 000
+fichiers ajoutés n'étaient jamais featurisés. Rien ne le signalait — l'index se
+construisait et restait valide, amputé de tout ce qu'on venait de télécharger.
+`resume_is_valid` compare maintenant le nombre de fichiers du dossier.
+
+**Le manifeste s'écrasait au lieu de fusionner.** Le dossier de sortie
+s'accumule d'un passage à l'autre ; un manifeste réécrit à neuf perdait les
+annotations des maps d'un lot précédent, dont les `.osu` restaient pourtant sur
+le disque. `build_index` les prenait alors pour des maps du dump et étiquetait
+`ranked` des maps graveyard.
+
+### Déploiement
+
+`deploy/update-index.sh` construit dans `data/index_new` et ne bascule qu'après
+un `/health` à `"ready":true`, avec retour arrière automatique.
+`scripts/publish_index.py` pousse le corpus depuis la machine de build et le
+déclenche — seuls les corpus `_unranked` montent (100 Mo), pas les 1,2 Go
+d'index.
+
+---
+
 ## 2026-08-23 — like this one, but denser
 
 Until now you could say *like this one* and *not like that one*. You can now say

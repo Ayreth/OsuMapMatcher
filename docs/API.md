@@ -129,7 +129,7 @@ curl -s https://api.example.com/api/v1/meta
   "feature_names": ["cs", "hp", "od", "ar", "..."],
   "groups": ["aim", "speed", "rhythm", "spacing", "parameters"],
   "variants": ["nomod", "DT"],
-  "n_maps": { "nomod": 151558, "DT": 151329 },
+  "n_maps": { "nomod": 193153, "DT": 191406 },
   "supports": ["multi", "group_filter", "avoid", "steer"],
   "steer_axes": [
     { "axis": "object_density", "more": "denser", "less": "less dense" },
