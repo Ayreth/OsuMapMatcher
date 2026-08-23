@@ -1,0 +1,4 @@
+# Les scripts shell tournent sur le serveur : un CRLF les rend illisibles
+# par /usr/bin/env ("bad interpreter"). Ils restent en LF, quelle que soit
+# la plateforme du checkout.
+*.sh text eol=lf
