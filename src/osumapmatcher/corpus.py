@@ -214,14 +214,36 @@ def resume_is_valid(out_dir: Path, source: Path, mods: object | None) -> bool:
     # nombre de fichiers du NOUVEAU lot, et l'egalite casse. C'est le meme
     # signal que les taux de skip au-dessus de 100 % -- sauf qu'ici on le teste
     # au lieu de se contenter de l'afficher.
-    #
-    # C'est le seul garde-fou qui rattrape le cas ou la source et le nombre de
-    # fichiers sont pourtant corrects : un dossier qui a grossi depuis le
-    # dernier passage, avec une tranche qui ne couvre que l'ancien contenu.
     n_seen = int(payload.get("n_seen", 0))
     n_kept = int(payload.get("n_kept", 0))
     n_skipped = sum(int(v) for v in (payload.get("skips") or {}).values())
-    return n_kept + n_skipped == n_seen
+    if n_kept + n_skipped != n_seen:
+        return False
+
+    # Le dossier a-t-il change de taille depuis le dernier passage ?
+    #
+    # Ce test-la est le seul qui rattrape le cas le plus couteux, et le plus
+    # silencieux : elargir le pool non classe. La reprise est indexee par
+    # POSITION -- tranche 0 = les 50 000 premiers fichiers de `sorted(glob)`.
+    # Passer de 10 000 a 40 000 fichiers laisse toujours une seule tranche, la
+    # tranche 0, qui existe deja et qui est marquee terminee. Elle est donc
+    # reutilisee telle quelle, et les 30 000 fichiers ajoutes ne sont jamais
+    # featurises. Rien ne le signale : le compte de fichiers annonce au
+    # demarrage est bien le nouveau, l'index se construit, il est valide, il
+    # lui manque juste tout ce qu'on venait d'ajouter.
+    #
+    # Le controle d'egalite au-dessus ne le voit pas : il ne teste que la
+    # coherence interne de l'ancien manifeste, qui reste vraie.
+    #
+    # Reordonner suffirait d'ailleurs a tout invalider meme a nombre egal : un
+    # fichier insere se glisse dans le tri et decale toutes les positions
+    # suivantes. On ne cherche donc pas a reprendre finement, on refeaturise.
+    if source.is_dir():
+        n_actuel = sum(1 for _ in source.glob("*.osu"))
+        if n_actuel != n_seen:
+            return False
+
+    return True
 
 
 def build_corpus(
@@ -237,7 +259,8 @@ def build_corpus(
 ) -> BuildReport:
     out_dir.mkdir(parents=True, exist_ok=True)
     if resume and not resume_is_valid(out_dir, source, mods):
-        print(f"!! {out_dir} a ete bati sur une autre source ou d'autres mods.")
+        print(f"!! {out_dir} ne decrit plus ce lot : autre source, autres mods, "
+              "ou dossier qui a change de taille.")
         print("!! Ses tranches sont effacees et tout est refeaturise.")
         resume = False
     if not resume:
