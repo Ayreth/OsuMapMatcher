@@ -277,3 +277,21 @@ def test_les_deux_pages_montrent_exactement_les_memes_axes():
         return [ligne.split('"')[1] for ligne in bloc.splitlines() if '["' in ligne]
 
     assert axes(page) == axes(overlay) == list(AXES_DE_LA_PAGE)
+
+
+def test_meta_interdit_la_mise_en_cache(client):
+    """
+    Regression, trouvee en conditions reelles : l'API annoncait `steer`, la page
+    l'avait, et le panneau restait cache -- le navigateur relisait un /meta
+    d'avant le deploiement. `supports` decide de ce qu'une page montre, donc une
+    reponse en cache est une reponse fausse des qu'un serveur est mis a jour.
+    """
+    assert client.get("/api/v1/meta").headers["cache-control"] == "no-store"
+
+
+def test_les_deux_pages_sondent_meta_sans_cache():
+    """Meme raison, cote client : la sonde ne doit jamais venir du cache."""
+    for nom in ("explore.html", "index.html"):
+        page = (STATIC_DIR / nom).read_text(encoding="utf-8")
+        sonde = page.split('fetch(url + "/api/v1/meta"', 1)[1][:120]
+        assert 'cache: "no-store"' in sonde, nom

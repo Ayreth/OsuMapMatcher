@@ -72,7 +72,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
+from fastapi import (
+    APIRouter, Depends, FastAPI, HTTPException, Query, Request, Response,
+)
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
@@ -901,11 +903,18 @@ def build_router(service: SearchService) -> APIRouter:
     # -- description -----------------------------------------------------------
 
     @router.get("/meta", summary="Feature set, variants and limits")
-    def meta() -> dict[str, Any]:
+    def meta(response: Response) -> dict[str, Any]:
         """
         Ce qu'un client lit au demarrage : version du jeu de features, variantes
         servies, bornes acceptees.
+
+        `no-store` n'est pas une precaution de principe : `supports` est ce qui
+        decide si une page montre une fonctionnalite, et une reponse en cache
+        est une reponse d'AVANT le dernier deploiement. Vu en vrai -- l'API
+        annoncait `steer`, la page l'avait, et le panneau restait cache parce
+        que le navigateur relisait un /meta d'il y a dix minutes.
         """
+        response.headers["Cache-Control"] = "no-store"
         searchers = service._provider()
         sizes: dict[str, int] = {}
         for name in service.available():

@@ -1130,7 +1130,12 @@ async function askMeta(url) {
   const stop = new AbortController();
   const timer = setTimeout(() => stop.abort(), 1500);
   try {
-    const response = await fetch(url + "/api/v1/meta", { signal: stop.signal });
+    // no-store : `supports` decide de ce que la page montre, et une
+    // reponse en cache est une reponse d'AVANT le dernier deploiement.
+    // Vu en vrai, le panneau Steer est reste cache dix minutes apres
+    // que l'API a su le servir.
+    const response = await fetch(url + "/api/v1/meta",
+                                 { signal: stop.signal, cache: "no-store" });
     return response.ok ? await response.json() : null;
   } catch (err) {
     return null;

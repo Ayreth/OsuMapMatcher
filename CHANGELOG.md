@@ -100,6 +100,13 @@ A panel neither page can use is a panel neither page shows: both read
 older than they are. Verified against the live API before this release was
 deployed — the overlay simply had no Steer panel, rather than a 400.
 
+That check had a hole, found by running it for real rather than by reasoning
+about it: `/meta` carried no `Cache-Control`, so after the deploy the overlay
+kept hiding the panel because the browser was still reading a `supports` from
+ten minutes earlier. `/meta` now answers `no-store` and both pages probe it with
+`cache: "no-store"`. A capability probe served from cache is a capability probe
+answering about the previous version of the server.
+
 Nine more axes exist and stay available through the API. Fifteen sliders is an
 interface nobody opens.
 
