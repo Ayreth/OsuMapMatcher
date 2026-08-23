@@ -762,9 +762,22 @@ function parseRef(raw) {
 
 /* ================= quel serveur repond ? ================= */
 
-async function askMeta(url) {
+/* Budgets de la sonde /meta. Deux, et pas un seul, parce que les deux echecs
+   ne se ressemblent pas : un serveur local absent refuse la connexion tout de
+   suite, donc l'attendre longtemps ne ferait que retarder le demarrage de tous
+   ceux qui n'ont pas start.bat. Le distant, lui, n'a aucune raison qu'on soit
+   impatient avec lui -- s'il ne repond pas, la page ne sert a rien.
+
+   Mesure : au premier appel suivant un redemarrage du conteneur, /meta a mis
+   plus de deux secondes. La page en concluait "aucun serveur", masquait le
+   panneau Steer et n'affichait pas la taille du corpus, alors que les
+   recherches, elles, marchaient tres bien juste apres. */
+const LOCAL_PROBE_MS = 1500;
+const REMOTE_PROBE_MS = 8000;
+
+async function askMeta(url, budget) {
   const stop = new AbortController();
-  const timer = setTimeout(() => stop.abort(), 2000);
+  const timer = setTimeout(() => stop.abort(), budget || REMOTE_PROBE_MS);
   try {
     // no-store : `supports` decide de ce que la page montre, et une
     // reponse en cache est une reponse d'AVANT le dernier deploiement.
@@ -798,7 +811,10 @@ async function pickApi() {
   if (!candidates.includes(LOCAL_API)) candidates.push(LOCAL_API);
 
   for (const url of candidates) {
-    const meta = await askMeta(url);
+    // le budget court ne vaut que pour une adresse locale : servie par l'API
+    // hebergee, la propre origine de cette page EST le serveur distant
+    const proche = /^https?:\/\/(localhost|127\.0\.0\.1)/.test(url);
+    const meta = await askMeta(url, proche ? LOCAL_PROBE_MS : REMOTE_PROBE_MS);
     if (meta && (meta.variants || []).length) {
       HOST.api = url;
       HOST.onLocal = /^https?:\/\/(localhost|127\.0\.0\.1)/.test(url);

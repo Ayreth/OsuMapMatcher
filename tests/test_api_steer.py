@@ -295,3 +295,29 @@ def test_les_deux_pages_sondent_meta_sans_cache():
         page = (STATIC_DIR / nom).read_text(encoding="utf-8")
         sonde = page.split('fetch(url + "/api/v1/meta"', 1)[1][:120]
         assert 'cache: "no-store"' in sonde, nom
+
+
+def test_la_sonde_distante_est_plus_patiente_que_la_sonde_locale():
+    """
+    Regression, trouvee en deployant : la sonde /meta abandonnait au bout de
+    1,5 s. Le premier appel apres un redemarrage du conteneur est plus lent que
+    ca, donc la page concluait "aucun serveur", masquait le panneau Steer et
+    n'affichait pas la taille du corpus -- alors que les recherches marchaient.
+
+    Deux budgets et pas un seul : un serveur local absent refuse la connexion
+    tout de suite, donc l'attendre longtemps ne retarderait que ceux qui n'ont
+    pas start.bat. Le distant n'a aucune raison qu'on soit impatient avec lui.
+    """
+    import re
+
+    for nom in ("explore.html", "index.html"):
+        page = (STATIC_DIR / nom).read_text(encoding="utf-8")
+        budgets = {
+            cle: int(valeur)
+            for cle, valeur in re.findall(
+                r"const (LOCAL_PROBE_MS|REMOTE_PROBE_MS) = (\d+);", page
+            )
+        }
+        assert set(budgets) == {"LOCAL_PROBE_MS", "REMOTE_PROBE_MS"}, nom
+        assert budgets["REMOTE_PROBE_MS"] > budgets["LOCAL_PROBE_MS"], nom
+        assert budgets["REMOTE_PROBE_MS"] >= 5000, nom

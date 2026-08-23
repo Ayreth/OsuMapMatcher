@@ -100,12 +100,23 @@ A panel neither page can use is a panel neither page shows: both read
 older than they are. Verified against the live API before this release was
 deployed — the overlay simply had no Steer panel, rather than a 400.
 
-That check had a hole, found by running it for real rather than by reasoning
-about it: `/meta` carried no `Cache-Control`, so after the deploy the overlay
-kept hiding the panel because the browser was still reading a `supports` from
-ten minutes earlier. `/meta` now answers `no-store` and both pages probe it with
-`cache: "no-store"`. A capability probe served from cache is a capability probe
-answering about the previous version of the server.
+That check had two holes, and deploying it for real found both — neither would
+have turned up by reasoning about the code.
+
+`/meta` carried no `Cache-Control`, so after the deploy the overlay kept hiding
+the panel: the browser was still reading a `supports` from ten minutes earlier.
+It now answers `no-store`, and both pages probe it with `cache: "no-store"`. A
+capability probe served from cache answers about the previous version of the
+server.
+
+And the probe gave up after 1.5 s. The first call after a container restart
+takes longer than that, so the page concluded "no server at all" — no corpus
+size, no Steer panel — while searches issued a second later worked perfectly.
+The budget is now split in two: 1.5 s for a local server, which either answers
+at once or refuses the connection, and 8 s for a remote one, which there is no
+reason to be impatient with since the page is useless without it. This bug
+predates steering; it was invisible because all it cost was the "160,905 maps
+indexed" label.
 
 Nine more axes exist and stay available through the API. Fifteen sliders is an
 interface nobody opens.

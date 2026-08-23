@@ -1060,7 +1060,7 @@ function startLocalMode() {
   // Le serveur local monte le MEME routeur que l'API hebergee : son /meta dit
   // donc ce qu'il sait faire, direction comprise. Sans cet appel, les curseurs
   // n'existeraient que dans le mode counter, pour la meme page.
-  askMeta("").then(buildSteer);
+  askMeta("", LOCAL_PROBE_MS).then(buildSteer);
   const stream = new EventSource("/events");
   stream.onmessage = (event) => {
     const message = JSON.parse(event.data);
@@ -1126,9 +1126,22 @@ function fromTosu(data) {
 }
 
 /* Une API repond-elle ici ? Renvoie son /meta, ou null. */
-async function askMeta(url) {
+/* Budgets de la sonde /meta. Deux, et pas un seul, parce que les deux echecs
+   ne se ressemblent pas : un serveur local absent refuse la connexion tout de
+   suite, donc l'attendre longtemps ne ferait que retarder le demarrage de tous
+   ceux qui n'ont pas start.bat. Le distant, lui, n'a aucune raison qu'on soit
+   impatient avec lui -- s'il ne repond pas, la page ne sert a rien.
+
+   Mesure : au premier appel suivant un redemarrage du conteneur, /meta a mis
+   plus de deux secondes. La page en concluait "aucun serveur", masquait le
+   panneau Steer et n'affichait pas la taille du corpus, alors que les
+   recherches, elles, marchaient tres bien juste apres. */
+const LOCAL_PROBE_MS = 1500;
+const REMOTE_PROBE_MS = 8000;
+
+async function askMeta(url, budget) {
   const stop = new AbortController();
-  const timer = setTimeout(() => stop.abort(), 1500);
+  const timer = setTimeout(() => stop.abort(), budget || REMOTE_PROBE_MS);
   try {
     // no-store : `supports` decide de ce que la page montre, et une
     // reponse en cache est une reponse d'AVANT le dernier deploiement.
@@ -1156,7 +1169,7 @@ async function pickApi() {
     HOST.onLocalApi = /^https?:\/\/(localhost|127\.0\.0\.1)/.test(HOST.api);
     return askMeta(HOST.api);
   }
-  const local = await askMeta(LOCAL_API);
+  const local = await askMeta(LOCAL_API, LOCAL_PROBE_MS);
   // un serveur local sans index repond /meta mais ne sait rien chercher :
   // le preferer enverrait le joueur dans un mur
   if (local && (local.variants || []).length) {
