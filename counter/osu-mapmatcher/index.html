@@ -115,8 +115,11 @@
   .notice.warn { background: rgba(42,35,20,.9); border: 1px solid #574616; color: var(--warn); }
 
   /* ---- collapsible settings ---- */
-  .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
-  @media (max-width: 900px) { .panels { grid-template-columns: 1fr; } }
+  /* Empiles, pas cote a cote. En deux colonnes, le panneau Steer -- qui a
+     besoin de toute la largeur -- s'intercalait entre les deux autres et
+     poussait chacun sur sa propre ligne : trois bandeaux et deux trous a
+     droite. Empiles, ils font trois bandes pleines et se replient tous. */
+  .panels { display: grid; grid-template-columns: 1fr; gap: 12px; margin-bottom: 16px; }
   .sicon {
     display: inline-flex; align-items: center; margin-right: 5px;
     vertical-align: -1px; flex: none;
@@ -207,7 +210,6 @@
      Meme forme que sur /explore, a dessein : deux interfaces du meme outil ne
      doivent pas avoir l'air d'outils differents. La colonne de droite porte une
      phrase, pas un nombre, donc elle est plus large que celle des poids. */
-  #panelS { grid-column: 1 / -1; }
   #steer { display: grid; grid-template-columns: 1fr 1fr; gap: 0 26px; }
   @media (max-width: 900px) { #steer { grid-template-columns: 1fr; } }
   .srow { grid-template-columns: 104px 1fr 150px; }
