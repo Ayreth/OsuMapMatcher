@@ -311,6 +311,36 @@ half an hour. It is interruptible and resumable: a file already on disk whose
 MD5 still matches is not fetched again, so raising `--sets` later only costs the
 difference.
 
+#### Asking for a pool instead of a top
+
+`--sets N` is a top: you know how many sets you get, not where it stops.
+`--min-plays N` is the other way round — it walks down the ranking and stops at
+the threshold:
+
+```bash
+.venv\Scripts\python.exe scripts\fetch_unranked.py --min-plays 5000 --min-stars 5.2 --max-stars 11 --max-diffs 10
+```
+
+That is roughly 36,100 graveyard sets, ~35,000 difficulties, ~1 GB. The
+threshold drives the paging rather than filtering afterwards: the sort is
+descending, so the first page that ends below the threshold is the last one
+worth asking for — 361 requests instead of the ~2,000 a blind sweep would cost.
+
+- `--min-stars` / `--max-stars` are **nomod** star ratings, the ones the mirror
+  reports. The DT corpus rates these same maps around 1.4× higher, so a window
+  aimed at what DT *displays* wants its floor lowered accordingly — asking for
+  5.2 nomod leaves the DT variant with nothing to recommend at the bottom of its
+  own range.
+- `--max-diffs` counts **std** difficulties only and the bound is inclusive, so
+  a set of three std and fifty mania is still a set of three. It exists to drop
+  the hundred-difficulty training packs that otherwise flood the pool with
+  variations on one thing.
+
+All three filter on what the search already returned, so a difficulty dropped
+this way costs no file request at all. Runs accumulate in the same folder and
+the manifest merges rather than overwrites, so a later run with different
+criteria does not strip the annotations of an earlier one.
+
 Where the data comes from, and why:
 
 - **The ranking comes from [osu.direct](https://osu.direct)**, which sorts by

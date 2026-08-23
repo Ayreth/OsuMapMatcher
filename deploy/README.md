@@ -128,6 +128,40 @@ $OSUMAPMATCHER_DATA/index/
   DT/…
 ```
 
+### Ship the corpus and rebuild on the server
+
+Copying finished indexes up means moving ~235 MB per variant every time. The
+corpus they are built from is far smaller — features, not files — and the
+server has the CPU to turn one into the other in about 20 s per variant. Two
+scripts do that end to end:
+
+```bash
+# from the build machine: pushes the corpus, then rebuilds and swaps remotely
+python scripts/publish_index.py --dry-run
+python scripts/publish_index.py
+```
+
+```bash
+# on the server, if you would rather drive it yourself
+./deploy/update-index.sh              # every variant in deploy/.env
+DRY_RUN=1 ./deploy/update-index.sh    # check the inputs, build nothing
+```
+
+Only `data/corpus/<variant>_unranked/` travels by default (~2.2 kB per map).
+The dump corpora are ~360 MB and only change when ppy publishes a new dump, so
+they need `--full`.
+
+`update-index.sh` builds into `data/index_new` and only swaps once the API
+answers `"ready":true`, rolling back to the previous index if it does not. It
+also passes what a hand-typed `build_index.py` invocation usually omits:
+
+- **both corpora** — `--corpus data/corpus/nomod` alone yields an index without
+  a single unranked map. Nothing warns you; the index is perfectly valid and
+  simply missing its whole pool.
+- **`--manifest` and `--loved`** — without them the `status` and `playcount`
+  columns do not exist, graveyard maps come back labelled as dump maps, and the
+  API reports them as ranked.
+
 ### Let the container fetch it on first boot
 
 The default Docker command passes `--fetch --variants nomod`, which downloads
