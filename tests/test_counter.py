@@ -44,10 +44,42 @@ def test_le_counter_livre_est_a_jour():
     )
 
 
+def _fiche(dossier: Path) -> dict[str, str]:
+    """La fiche telle que tosu la lit : une paire `Clef: valeur` par ligne."""
+    lignes = (dossier / "metadata.txt").read_text(encoding="utf-8").splitlines()
+    return dict(
+        (cle.strip(), valeur.strip())
+        for cle, _, valeur in (ligne.partition(":") for ligne in lignes if ligne.strip())
+    )
+
+
 def test_le_counter_a_sa_fiche():
-    metadata = json.loads((SHIPPED / "metadata.txt").read_text(encoding="utf-8"))
-    assert metadata["name"]
-    assert metadata["author"] == "Ayreth"
+    fiche = _fiche(SHIPPED)
+    assert fiche["Name"] == "osu!MapMatcher"
+    assert fiche["Author"] == "Ayreth"
+    assert fiche["Version"]
+
+
+def test_la_fiche_n_est_surtout_pas_du_json():
+    """
+    Regression : elle l'a ete, et tosu -- qui lit ce fichier ligne a ligne --
+    affichait le counter "undefined v1.0 by undefined" dans son tableau de bord.
+    C'etait pire que pas de fiche du tout : sans fiche, tosu retombe au moins sur
+    le nom du dossier.
+    """
+    brut = (SHIPPED / "metadata.txt").read_text(encoding="utf-8")
+    assert not brut.lstrip().startswith("{"), "tosu ne sait pas lire du JSON"
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(brut)
+    for ligne in brut.splitlines():
+        assert ":" in ligne, f"ligne sans clef : {ligne!r}"
+
+
+def test_la_fiche_livree_est_celle_du_script():
+    """Le dossier livre ne doit pas garder une fiche d'une version precedente."""
+    assert _fiche(SHIPPED) == {
+        cle: valeur for cle, valeur in pack_counter.METADATA
+    }
 
 
 def test_l_api_visee_peut_etre_changee_a_la_construction(tmp_path):

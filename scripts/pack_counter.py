@@ -19,7 +19,6 @@ serves it at http://127.0.0.1:24050/<folder>/ and lists it in its dashboard.
 from __future__ import annotations
 
 import argparse
-import json
 import shutil
 import sys
 from pathlib import Path
@@ -31,19 +30,43 @@ from osumapmatcher.paths import PROJECT_ROOT  # noqa: E402
 FOLDER = "osu-mapmatcher"
 PAGE = PROJECT_ROOT / "src" / "osumapmatcher" / "static" / "index.html"
 
-#: decrit le counter pour la bibliotheque tosu. Le counter fonctionne sans,
-#: c'est la fiche de la vitrine, pas une dependance.
-METADATA = {
-    "name": "osu!MapMatcher",
-    "author": "Ayreth",
-    "resolution": [-1, -1],
-    "authorLinks": ["https://github.com/Ayreth/OsuMapMatcher"],
+#: decrit le counter pour la bibliotheque tosu.
+#:
+#: Format `Clef: valeur`, une par ligne, et surtout PAS du JSON : tosu lit ce
+#: fichier ligne a ligne. Il a longtemps ete ecrit en JSON ici, et le tableau de
+#: bord de tosu affichait alors "undefined v1.0 by undefined" -- c'est-a-dire
+#: pire que pas de fiche du tout, puisque sans fiche tosu retombe au moins sur
+#: le nom du dossier. Le format ci-dessous est copie d'un counter tiers que tosu
+#: affiche correctement, verifie dans le tableau de bord.
+#:
+#: L'ordre est celui de la source : tosu s'en moque, un humain non.
+METADATA: tuple[tuple[str, str], ...] = (
+    ("Usecase", "obs-overlay"),
+    ("Name", "osu!MapMatcher"),
+    ("Author", "Ayreth"),
     # tosu s'en sert pour proposer la mise a jour : sans montee de version, une
     # nouveaute de l overlay n atteint personne. 1.2.0 = icones ranked, loved,
     # graveyard et pending. 1.3.0 = le panneau Steer, "comme celle-ci mais plus
-    # dense".
-    "version": "1.3.0",
-}
+    # dense". 1.3.1 = panneaux empiles, et cette fiche enfin lisible.
+    #
+    # Le numero monte meme pour une correction d'affichage : republier un
+    # fichier different sous un numero deja publie ferait circuler deux 1.3.0
+    # distinctes, et tosu ne proposerait la correction a personne.
+    ("Version", "1.3.1"),
+    ("CompatibleWith", "tosu"),
+    # -1 = n'importe quelle taille. La page est responsive et se lit aussi bien
+    # dans un coin d'ecran que plein cadre.
+    ("Resolution", "-1x-1"),
+    ("Authorlinks", "https://github.com/Ayreth/OsuMapMatcher"),
+)
+
+
+def metadata_text() -> str:
+    return "".join(f"{key}: {value}\n" for key, value in METADATA)
+
+
+def metadata_value(key: str) -> str:
+    return next(value for name, value in METADATA if name == key)
 
 
 def find_tosu() -> Path | None:
@@ -65,9 +88,7 @@ def build(destination: Path, api: str) -> Path:
     target = destination / FOLDER
     target.mkdir(parents=True, exist_ok=True)
     (target / "index.html").write_text(page, encoding="utf-8")
-    (target / "metadata.txt").write_text(
-        json.dumps(METADATA, indent=2), encoding="utf-8"
-    )
+    (target / "metadata.txt").write_text(metadata_text(), encoding="utf-8")
     return target
 
 

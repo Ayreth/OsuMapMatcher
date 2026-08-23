@@ -1,12 +1,7 @@
-{
-  "name": "osu!MapMatcher",
-  "author": "Ayreth",
-  "resolution": [
-    -1,
-    -1
-  ],
-  "authorLinks": [
-    "https://github.com/Ayreth/OsuMapMatcher"
-  ],
-  "version": "1.3.0"
-}
+Usecase: obs-overlay
+Name: osu!MapMatcher
+Author: Ayreth
+Version: 1.3.1
+CompatibleWith: tosu
+Resolution: -1x-1
+Authorlinks: https://github.com/Ayreth/OsuMapMatcher
