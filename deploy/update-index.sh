@@ -101,13 +101,23 @@ for v in $VARIANTES; do
             --out "/data/index_new/$v"
 done
 
-# une variante vide passerait les etapes precedentes sans un mot
+# Une variante incomplete passerait les etapes precedentes sans un mot : le
+# builder peut sortir en 0 apres avoir ecrit une partie seulement.
+#
+# Les cinq noms viennent des constantes de src/osumapmatcher/index.py
+# (SCALER_FILE, VECTORS_FILE, RAW_FILE, INDEX_FILE, DB_FILE). Les verifier
+# toutes plutot qu'une seule : c'est exactement l'oubli qui a fait echouer la
+# premiere repetition de ce script, sur un `maps.sqlite` qui n'a jamais existe.
+ATTENDUS="scaler.npz vectors.npy vectors_raw.npy index.usearch corpus.sqlite"
 for v in $VARIANTES; do
-    if [ ! -s "$DATA/index_new/$v/maps.sqlite" ]; then
-        echo
-        echo "index_new/$v est vide ou incomplet. L'index en service n'a pas bouge."
-        exit 1
-    fi
+    for f in $ATTENDUS; do
+        if [ ! -s "$DATA/index_new/$v/$f" ]; then
+            echo
+            echo "index_new/$v/$f est absent ou vide."
+            echo "L'index en service n'a pas bouge."
+            exit 1
+        fi
+    done
 done
 
 # --- bascule ------------------------------------------------------------------
