@@ -81,6 +81,19 @@ PAGE_SIZE = 100
 #: ppy recommande pour sa propre API.
 DEFAULT_DELAY = 0.35
 
+#: pause entre deux PAGES de recherche. La recherche et les fichiers ne sont pas
+#: limites au meme rythme : a 0.35 s les fichiers passent sans broncher, mais la
+#: recherche renvoie des 429 des la quarantieme page. Une page pese ~500 ko et
+#: couvre 100 sets, donc rien ne presse -- balayer 36 000 sets ne fait que 361
+#: requetes, six minutes a ce rythme.
+SEARCH_DELAY = 1.0
+
+#: garde-fou de la pagination quand on descend par seuil de plays plutot que par
+#: nombre de sets : sans borne, un mirror qui repondrait toujours quelque chose
+#: ferait tourner la boucle indefiniment. 200 000 sets est tres au-dela de ce que
+#: le catalogue std contient au-dessus de quelques centaines de plays.
+MAX_SEARCH_OFFSET = 200_000
+
 #: une requete sur 3 700 finit quand meme par tomber pour rien. On reessaie
 #: avec un recul croissant plutot que de perdre la map.
 MAX_ATTEMPTS = 4
@@ -276,21 +289,37 @@ def _is_std(beatmap: dict) -> bool:
 
 
 def list_top_sets(
-    n_sets: int,
+    n_sets: int | None = None,
     *,
+    min_playcount: int = 0,
     statuses: Sequence[str] = DEFAULT_STATUSES,
     mirror: Mirror | None = None,
-    delay: float = DEFAULT_DELAY,
+    delay: float = SEARCH_DELAY,
     progress: bool = True,
 ) -> list[dict]:
     """
-    Les `n_sets` beatmapsets non classes les plus joues, tous statuts confondus.
+    Les beatmapsets non classes les plus joues, tous statuts confondus.
+
+    Deux facons de dire ou s'arreter, cumulables :
+
+      * `n_sets` -- les n premiers, quel que soit leur playcount. C'est un top.
+      * `min_playcount` -- tous ceux qui depassent ce seuil, quel qu'en soit le
+        nombre. C'est un pool. « Tout ce qui a plus de 5 000 plays » se decrit
+        ainsi et pas autrement : on ne sait pas d'avance combien ca fait.
+
+    Le seuil peut piloter la pagination parce que le tri est decroissant : des
+    qu'une page finit sous le seuil, tout ce qui suit y est aussi. Pas besoin de
+    lire le catalogue entier pour en extraire une tranche.
 
     Chaque statut se pagine separement -- l'API ne sait pas trier une union --
     puis on refusionne sur le playcount avant de couper. Demander n sets par
     statut et garder les n meilleurs du melange est correct : un set absent du
     top n de son propre statut ne peut pas etre dans le top n global.
     """
+    if n_sets is None and min_playcount <= 0:
+        raise ValueError(
+            "il faut au moins un critere d'arret : n_sets, min_playcount, ou les deux."
+        )
     mirror = mirror or MIRRORS[DEFAULT_MIRROR]
     if not mirror.can_rank:
         raise ValueError(
@@ -306,31 +335,44 @@ def list_top_sets(
                 f"(connus : {', '.join(sorted(STATUS_CODES))})"
             )
         code = STATUS_CODES[status]
-        for offset in range(0, n_sets, PAGE_SIZE):
+        offset = 0
+        while offset < MAX_SEARCH_OFFSET:
+            amount = PAGE_SIZE if n_sets is None else min(PAGE_SIZE, n_sets - offset)
+            if amount <= 0:
+                break
             url = mirror.search_url.format(
-                mode=MODE_STD,
-                status=code,
-                amount=min(PAGE_SIZE, n_sets - offset),
-                offset=offset,
+                mode=MODE_STD, status=code, amount=amount, offset=offset,
             )
             page = _unwrap(json.loads(_get(url).decode("utf-8")))
+            plancher = min((int(e.get("play_count") or 0) for e in page), default=0)
             if progress:
-                print(f"  {status:<10} offset {offset:>5} -> {len(page):>3} sets",
-                      flush=True)
+                print(f"  {status:<10} offset {offset:>6} -> {len(page):>3} sets"
+                      f"   plancher {plancher:>10,} plays", flush=True)
             if not page:
                 break
             for entry in page:
                 identifier = entry.get("id")
                 if identifier is not None:
                     merged[int(identifier)] = entry
-            if len(page) < PAGE_SIZE:
+            if len(page) < amount:
                 break
+            # tri decroissant : une page dont le dernier set est deja sous le
+            # seuil est la derniere qui nous interesse
+            if min_playcount and plancher < min_playcount:
+                break
+            offset += len(page)
             time.sleep(delay)
+        else:
+            if progress:
+                print(f"  {status:<10} arret au garde-fou de "
+                      f"{MAX_SEARCH_OFFSET:,} sets", flush=True)
 
     ordered = sorted(
         merged.values(), key=lambda s: int(s.get("play_count") or 0), reverse=True
     )
-    return ordered[:n_sets]
+    if min_playcount:
+        ordered = [s for s in ordered if int(s.get("play_count") or 0) >= min_playcount]
+    return ordered if n_sets is None else ordered[:n_sets]
 
 
 def list_loved_checksums(
@@ -374,16 +416,47 @@ def list_loved_checksums(
     return checksums
 
 
-def refs_from_sets(sets: Iterable[dict]) -> list[BeatmapRef]:
-    """Aplatit les sets en difficultes std uniques, sans les autres modes."""
+def refs_from_sets(
+    sets: Iterable[dict],
+    *,
+    min_stars: float = 0.0,
+    max_stars: float = float("inf"),
+    max_diffs: int | None = None,
+    min_playcount: int = 0,
+) -> list[BeatmapRef]:
+    """
+    Aplatit les sets en difficultes std uniques, sans les autres modes.
+
+    Les filtres portent sur ce que la recherche a DEJA renvoye : etoiles, nombre
+    de difficultes et playcount sont tous dans la reponse. Rien n'est donc
+    telecharge pour etre jete apres coup -- une difficulte ecartee ici ne coute
+    pas une seule requete de fichier, seulement l'octet de JSON qui la decrivait.
+
+    `max_diffs` compte les difficultes **std** du set, pas le total, et la borne
+    est inclusive : `max_diffs=10` garde les sets jusqu'a dix difficultes std. Un
+    set de trois std et cinquante mania reste un set de trois std. Ce filtre vise
+    les paquets d'entrainement a cent difficultes, qui remplissent le pool de
+    variations d'une seule et meme chose.
+
+    Les etoiles sont celles **sans mods**, telles que le mirror les annonce. Un
+    corpus DT bati sur ce pool verra ces memes maps autour de 1,4x ces valeurs :
+    viser une fenetre affichee en DT demande donc d'abaisser `min_stars`
+    d'autant, sinon la variante DT n'a rien a recommander en bas de sa fenetre.
+    """
     refs: dict[int, BeatmapRef] = {}
     for entry in sets:
         playcount = int(entry.get("play_count") or 0)
+        if playcount < min_playcount:
+            continue
+        std = [b for b in (entry.get("beatmaps") or []) if _is_std(b)]
+        if max_diffs is not None and len(std) > max_diffs:
+            continue
         set_status = str(entry.get("status") or "unknown")
         artist = str(entry.get("artist") or "")
         title = str(entry.get("title") or "")
-        for beatmap in entry.get("beatmaps") or []:
-            if not _is_std(beatmap):
+        for beatmap in std:
+            stars = float(beatmap.get("difficulty_rating") or 0.0)
+            if not min_stars <= stars <= max_stars:
                 continue
             beatmap_id = beatmap.get("id")
             checksum = beatmap.get("checksum") or ""
@@ -399,7 +472,7 @@ def refs_from_sets(sets: Iterable[dict]) -> list[BeatmapRef]:
                 # le statut d'une difficulte peut differer de celui de son set
                 status=str(beatmap.get("status") or set_status),
                 playcount=playcount,
-                stars=float(beatmap.get("difficulty_rating") or 0.0),
+                stars=stars,
                 label=f"{artist} - {title} [{version}]",
             )
     return sorted(refs.values(), key=lambda r: (-r.playcount, r.beatmap_id))
@@ -635,6 +708,8 @@ def write_manifest(
     mirror: Mirror,
     statuses: Sequence[str],
     report: FetchReport,
+    merge: bool = True,
+    criteria: dict[str, Any] | None = None,
 ) -> Path:
     """
     Trace ce qui a ete pris, quand, et d'ou.
@@ -643,28 +718,55 @@ def write_manifest(
     seule source des colonnes `status` et `playcount` de l'index. La date compte
     aussi -- une map graveyard peut etre reuploadee par son auteur, son md5
     change alors, et l'entree du pool devient silencieusement obsolete.
+
+    **Fusion, pas ecrasement.** Le dossier de sortie s'accumule d'un passage a
+    l'autre : un fichier telecharge par un lot precedent y reste, meme si le lot
+    d'aujourd'hui a d'autres criteres et ne le redemande pas. Un manifeste
+    reecrit a neuf perdrait son annotation, et `build_index` le prendrait alors
+    pour une map du dump -- il etiquetterait `ranked` une map graveyard, sans
+    rien signaler. On repart donc de ce qui est deja ecrit, et on n'y superpose
+    que le lot courant.
+
+    Ne survivent a la fusion que les entrees dont le `.osu` est encore la : un
+    manifeste ne doit decrire que ce que le dossier contient vraiment.
     """
     ecartes = set(report.failures)
+    beatmaps: dict[str, dict[str, Any]] = {}
+
+    destination = out_dir / MANIFEST_FILE
+    if merge and destination.is_file():
+        try:
+            ancien = json.loads(destination.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            ancien = {}
+        for cle, valeur in (ancien.get("beatmaps") or {}).items():
+            if (out_dir / f"{cle}.osu").is_file():
+                beatmaps[str(cle)] = valeur
+
+    n_repris = len(beatmaps)
+    for ref in refs:
+        if ref.beatmap_id in ecartes:
+            continue
+        beatmaps[str(ref.beatmap_id)] = {
+            "beatmapset_id": ref.beatmapset_id,
+            "checksum": ref.checksum,
+            "status": ref.status,
+            "playcount": ref.playcount,
+            "stars": round(ref.stars, 3),
+            "label": ref.label,
+        }
+
     payload = {
         "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "mirror": mirror.name,
         "statuses": list(statuses),
+        "criteria": criteria or {},
         "n_refs": len(refs),
         "n_available": sum(1 for r in refs if r.beatmap_id not in ecartes),
-        "beatmaps": {
-            str(ref.beatmap_id): {
-                "beatmapset_id": ref.beatmapset_id,
-                "checksum": ref.checksum,
-                "status": ref.status,
-                "playcount": ref.playcount,
-                "stars": round(ref.stars, 3),
-                "label": ref.label,
-            }
-            for ref in refs
-            if ref.beatmap_id not in ecartes
-        },
+        "n_carried_over": n_repris,
+        "n_total": len(beatmaps),
+        "beatmaps": beatmaps,
     }
-    destination = out_dir / MANIFEST_FILE
     destination.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return destination
 

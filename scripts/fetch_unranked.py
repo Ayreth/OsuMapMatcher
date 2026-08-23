@@ -8,14 +8,32 @@ Le classement vient d'osu.direct (le seul mirror teste qui trie par plays sans
 OAuth) ; les fichiers sont tires de plusieurs mirrors en parallele, un thread
 chacun, ce qui repartit la charge autant que ca accelere.
 
-Interruptible : relancer la meme commande ne retelecharge que ce qui manque.
+Deux facons de delimiter le lot :
+
+  * `--sets N` prend les N sets les plus joues. C'est un top : on sait d'avance
+    combien ca fait, pas ou ca s'arrete.
+  * `--min-plays N` prend tout ce qui depasse N plays. C'est un pool : on sait
+    ou ca s'arrete, pas combien ca fait. Les deux se cumulent, le premier
+    atteint gagne.
+
+`--min-stars` / `--max-stars` / `--max-diffs` filtrent AVANT le telechargement,
+sur ce que la recherche a deja renvoye : une map ecartee ne coute pas une
+requete de fichier. Les etoiles sont celles sans mods.
+
+Interruptible : relancer la meme commande ne retelecharge que ce qui manque, et
+le manifeste fusionne au lieu d'ecraser -- un lot aux nouveaux criteres ne fait
+donc pas perdre les annotations d'un lot precedent.
 
 Usage :
-    .venv\\Scripts\\python.exe scripts\\fetch_unranked.py
-    .venv\\Scripts\\python.exe scripts\\fetch_unranked.py --sets 2000
-    .venv\\Scripts\\python.exe scripts\\fetch_unranked.py --dry-run
+    .venv\\Scripts\\python.exe scripts\\fetch_unranked.py --sets 500
+    .venv\\Scripts\\python.exe scripts\\fetch_unranked.py --dry-run --min-plays 5000
     .venv\\Scripts\\python.exe scripts\\fetch_unranked.py --statuses graveyard
     .venv\\Scripts\\python.exe scripts\\fetch_unranked.py --mirrors osu.direct,catboy
+
+    # le pool complet 5.2-11 etoiles, sets de dix difficultes au plus,
+    # au-dessus de 5 000 plays
+    .venv\\Scripts\\python.exe scripts\\fetch_unranked.py ^
+        --min-plays 5000 --min-stars 5.2 --max-stars 11 --max-diffs 10
 
 Puis, pour integrer le resultat a l'index :
     .venv\\Scripts\\python.exe scripts\\build_all.py
@@ -36,6 +54,7 @@ from osumapmatcher.unranked import (  # noqa: E402
     DEFAULT_POOL,
     DEFAULT_STATUSES,
     MIRRORS,
+    SEARCH_DELAY,
     download_refs,
     list_top_sets,
     refs_from_sets,
@@ -55,8 +74,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Recuperation des maps non classees les plus jouees"
     )
-    parser.add_argument("--sets", type=int, default=500,
-                        help="nombre de beatmapsets a prendre (defaut : 500)")
+    parser.add_argument("--sets", type=int, default=None,
+                        help="plafond de beatmapsets. Sans --min-plays, c'est "
+                             "simplement le top N (defaut : 500 si aucun des "
+                             "deux n'est donne)")
     parser.add_argument("--out", type=Path, default=None,
                         help="dossier de sortie (defaut : data/unranked_osu_files)")
     parser.add_argument("--statuses", default=",".join(DEFAULT_STATUSES),
@@ -69,9 +90,25 @@ def main() -> int:
                         choices=sorted(MIRRORS),
                         help="source du classement par plays (doit savoir trier)")
     parser.add_argument("--delay", type=float, default=DEFAULT_DELAY,
-                        help=f"pause entre requetes en s (defaut : {DEFAULT_DELAY})")
+                        help=f"pause entre deux fichiers, en s "
+                             f"(defaut : {DEFAULT_DELAY})")
+    parser.add_argument("--search-delay", type=float, default=SEARCH_DELAY,
+                        help="pause entre deux pages de recherche, en s. La "
+                             "recherche est limitee plus severement que les "
+                             f"fichiers (defaut : {SEARCH_DELAY})")
     parser.add_argument("--min-plays", type=int, default=0,
-                        help="ne garder que les sets au-dessus de ce nombre de plays")
+                        help="descendre le classement jusqu'a ce nombre de "
+                             "plays, et s'y arreter. Definit le lot au lieu de "
+                             "le filtrer apres coup")
+    parser.add_argument("--min-stars", type=float, default=0.0,
+                        help="etoiles minimales, SANS mods (defaut : aucune "
+                             "borne). En DT ces maps valent ~1.4x cette valeur")
+    parser.add_argument("--max-stars", type=float, default=float("inf"),
+                        help="etoiles maximales, sans mods")
+    parser.add_argument("--max-diffs", type=int, default=None,
+                        help="ecarter les sets de plus de N difficultes std, "
+                             "borne incluse. Vise les paquets d'entrainement a "
+                             "cent difficultes")
     parser.add_argument("--no-verify", dest="verify", action="store_false",
                         help="ne pas revalider le md5 de chaque fichier (deconseille)")
     parser.add_argument("--no-resume", dest="resume", action="store_false",
@@ -81,6 +118,14 @@ def main() -> int:
     args = parser.parse_args()
 
     statuses = [s.strip() for s in args.statuses.split(",") if s.strip()]
+    # aucun critere d'arret : on retombe sur l'ancien defaut plutot que de
+    # partir balayer le catalogue entier parce qu'un drapeau manquait
+    if args.sets is None and args.min_plays <= 0:
+        args.sets = 500
+    if args.min_stars > args.max_stars:
+        print(f"--min-stars ({args.min_stars}) est au-dessus de --max-stars "
+              f"({args.max_stars}) : aucune map ne peut passer.")
+        return 1
     out_dir = args.out or unranked_root()
     rank_mirror = MIRRORS[args.rank_mirror]
     try:
@@ -93,42 +138,62 @@ def main() -> int:
           f"fichiers : {', '.join(m.name for m in pool)} "
           f"({len(pool)} en parallele)")
     print(f"statuts    : {', '.join(statuses)}")
+    borne_haute = "aucune" if args.max_stars == float("inf") else f"{args.max_stars}"
+    print(f"etoiles    : {args.min_stars} a {borne_haute} (sans mods)")
+    print(f"diffs/set  : {args.max_diffs or 'sans limite'}")
     print(f"sortie     : {out_dir}")
     print()
-    print(f"classement des {args.sets} sets les plus joues...")
+    if args.min_plays:
+        print(f"descente du classement jusqu'a {args.min_plays:,} plays"
+              + (f", plafonnee a {args.sets:,} sets" if args.sets else "")
+              + "...")
+    else:
+        print(f"classement des {args.sets} sets les plus joues...")
 
     try:
         sets = list_top_sets(
-            args.sets, statuses=statuses, mirror=rank_mirror, delay=args.delay
+            args.sets,
+            min_playcount=args.min_plays,
+            statuses=statuses,
+            mirror=rank_mirror,
+            delay=args.search_delay,
         )
     except ValueError as exc:
         print(f"\n{exc}")
         return 1
 
-    if args.min_plays:
-        before = len(sets)
-        sets = [s for s in sets if int(s.get("play_count") or 0) >= args.min_plays]
-        print(f"  seuil a {args.min_plays:,} plays : {before} -> {len(sets)} sets")
-
     if not sets:
         print("\naucun set retourne : le mirror a peut-etre change ses parametres.")
         return 1
 
-    refs = refs_from_sets(sets)
+    refs = refs_from_sets(
+        sets,
+        min_stars=args.min_stars,
+        max_stars=args.max_stars,
+        max_diffs=args.max_diffs,
+        min_playcount=args.min_plays,
+    )
     if not refs:
-        print("\naucune difficulte std dans ces sets.")
+        print("\naucune difficulte std ne passe les filtres.")
         return 1
 
+    # ce qui est deja sur le disque ne sera pas retelecharge : c'est ce chiffre
+    # qui dit le vrai cout du lot, pas le nombre de difficultes retenues
+    manquantes = sum(1 for r in refs if not (out_dir / r.filename).is_file())
+
     plays = [int(s.get("play_count") or 0) for s in sets]
+    etoiles = [r.stars for r in refs]
     print()
-    print(f"{len(sets)} sets, {len(refs)} difficultes std "
-          f"({len(refs) / len(sets):.1f} par set)")
-    print(f"plays : de {max(plays):,} a {min(plays):,}")
-    estimate = len(refs) * AVG_OSU_BYTES
+    print(f"{len(sets)} sets, {len(refs)} difficultes std retenues "
+          f"({len(refs) / len(sets):.2f} par set)")
+    print(f"plays   : de {max(plays):,} a {min(plays):,}")
+    print(f"etoiles : de {min(etoiles):.2f} a {max(etoiles):.2f}")
+    print(f"deja sur le disque : {len(refs) - manquantes} / {len(refs)}")
+    estimate = manquantes * AVG_OSU_BYTES
     # chaque mirror tient son propre rythme, donc les debits s'additionnent
     debit = len(pool) / max(args.delay, 1e-6)
-    print(f"a telecharger : ~{estimate / 1e6:.0f} Mo, "
-          f"~{len(refs) / debit / 60:.0f} min a ~{debit:.0f} req/s cumules "
+    print(f"a telecharger : {manquantes} maps, ~{estimate / 1e6:.0f} Mo au plus, "
+          f"~{manquantes / debit / 60:.0f} min a ~{debit:.0f} req/s cumules "
           f"({1 / max(args.delay, 1e-6):.0f} par mirror)")
     print()
     print("top 5 :")
@@ -148,7 +213,14 @@ def main() -> int:
     report.n_sets = len(sets)
 
     manifest = write_manifest(
-        out_dir, refs, mirror=pool[0], statuses=statuses, report=report
+        out_dir, refs, mirror=pool[0], statuses=statuses, report=report,
+        criteria={
+            "min_plays": args.min_plays,
+            "min_stars": args.min_stars,
+            "max_stars": None if args.max_stars == float("inf") else args.max_stars,
+            "max_diffs": args.max_diffs,
+            "sets_cap": args.sets,
+        },
     )
     print()
     print(report.render())
