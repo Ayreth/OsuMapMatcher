@@ -19,6 +19,10 @@
 
   Le CSS et le rendu de carte sont repris de l'overlay a dessein : deux
   interfaces du meme outil ne doivent pas avoir l'air d'outils differents.
+
+  Le panneau "Steer" est propre a cette page : "comme celle-ci, mais plus
+  dense". Il demande de la place et un vocabulaire ecrit, deux choses que
+  l'overlay n'a pas -- lui reste pilote par la map en cours.
 -->
 <style>
   :root {
@@ -253,12 +257,41 @@
     gap: 10px; margin-top: 12px;
   }
   .selectline label { font-size: 12px; }
+  /* Un titre que rien n'annonce n'est lu par personne : le pointille dit qu'il
+     y a quelque chose a survoler. Les poids, eux, portent leur explication dans
+     le libelle du groupe -- ici le mot "Diverge" ne se devine pas. */
+  label.explain {
+    cursor: help; text-decoration: underline dotted var(--dim);
+    text-underline-offset: 3px;
+  }
+  label.explain:hover { color: var(--text); text-decoration-color: var(--violet); }
   select {
     background: #000; color: var(--text); border: 1px solid var(--line);
     border-radius: 5px; padding: 5px 7px; font-size: 12px; width: 100%;
     font-family: inherit; cursor: pointer;
   }
   .hint { font-size: 11px; color: var(--dim); margin-top: 8px; line-height: 1.4; }
+
+  /* ---- direction : "comme celle-ci, mais plus dense" ----
+     Colonne de droite plus large que celle des poids : elle ne porte pas un
+     nombre mais la phrase que l'utilisateur a demandee ("much denser"), et
+     c'est cette phrase qui doit rester lisible, pas le reglage qui la produit. */
+  #panelS { grid-column: 1 / -1; }
+  #steer { display: grid; grid-template-columns: 1fr 1fr; gap: 0 26px; }
+  @media (max-width: 900px) { #steer { grid-template-columns: 1fr; } }
+  .srow { grid-template-columns: 112px 1fr 156px; }
+  /* Sous cette largeur, un libelle et une phrase de vingt caracteres ne
+     laissent plus qu'une trentaine de pixels de rail : le curseur devient
+     impossible a viser au doigt. Il passe donc sous les deux, sur toute la
+     largeur, ou il est plus facile a attraper qu'avant. */
+  @media (max-width: 620px) {
+    .srow { grid-template-columns: 1fr auto; }
+    .srow input { grid-column: 1 / -1; }
+  }
+  .srow output { font-size: 11.5px; color: var(--dim); }
+  .srow output.on { color: var(--violet); font-weight: 600; }
+  .srow input.on::-webkit-slider-thumb { background: var(--violet); }
+  .srow input.on::-moz-range-thumb { background: var(--violet); }
 
   /* ---- group pills + counter-example ---- */
   .refine {
@@ -515,6 +548,27 @@
   </div>
 
   <div class="panels hidden" id="panels">
+    <details class="card hidden" id="panelS">
+      <summary>
+        <span class="caret">▼</span>
+        <span class="lbl">Steer</span>
+        <span class="sum" id="sumS">straight ahead</span>
+        <button class="rst" id="rstS" type="button">reset</button>
+      </summary>
+      <div class="inner">
+        <div id="steer"></div>
+        <div class="hint">
+          <b>What should be different.</b> “Like this one, but denser.” Maps that
+          do not really clear the gap you ask for are dropped from the list
+          entirely — so push too far and it can come back empty. That is an
+          honest answer: nothing in the corpus goes that far and still resembles
+          your map.
+          <br>Not to be confused with <b>Weights</b>, which changes how closeness
+          is measured without asking for any change at all.
+        </div>
+      </div>
+    </details>
+
     <details class="card" id="panelW">
       <summary>
         <span class="caret">▼</span>
@@ -525,7 +579,12 @@
       <div class="inner">
         <div id="weights"></div>
         <div class="hint">
-          What “similar” means to you. Raise a group to make it matter more.
+          <b>What counts as similar.</b> Raise a group and it weighs more when
+          two maps are compared — nothing gets pushed in any direction, the
+          twenty nearest maps are just measured differently.
+          <br>Not to be confused with <b>Steer</b>, which asks for something
+          deliberately <i>different</i> instead of changing how closeness is
+          measured.
         </div>
       </div>
     </details>
@@ -559,8 +618,8 @@
           <output id="of_lmax">2.0×</output>
         </div>
         <div class="selectline">
-          <label title="Stay close on everything except one group, then rank by how far apart that group is.">Diverge on</label>
-          <select id="f_div"><option value="">nothing</option></select>
+          <label class="explain" for="f_div" title="Same difficulty, opposite challenge. The results stay close to your map on every group EXCEPT the one you pick, and are then ranked by how far they are on that one — an aim map when you came from a speed map. Useful for practising a weakness without changing level.">Diverge on</label>
+          <select id="f_div" title="Same difficulty, opposite challenge: close on every group except this one, then ranked by how far they are on it."><option value="">nothing</option></select>
         </div>
         <div class="selectline">
           <label title="Which mod-adjusted corpus to search.">Corpus</label>
@@ -615,6 +674,29 @@ const GROUPS = [
    + "length, break time and overall density."],
 ];
 const GROUP_LABEL = Object.fromEntries(GROUPS.map(([k, l]) => [k, l]));
+
+/* Les axes de direction montres ici. L'API en ouvre quinze -- ceux de la table
+   d'explication -- mais quinze sliders sont une interface que personne n'ouvre.
+   Ces six-la sont ceux dont un joueur a une intuition immediate : il sait ce que
+   "plus dense" ou "des jumps plus larges" veut dire sans avoir a l'apprendre.
+   Les MOTS ne sont pas ecrits ici : ils viennent de /meta, donc de la meme table
+   que les phrases affichees sous chaque resultat. Un slider "denser" et une
+   explication "denser" doivent designer la meme chose. */
+const STEER_ROWS = [
+  ["object_density", "Density", "How many objects per second the map throws at you."],
+  ["dt_frac_lt100", "Streams", "How much of the map is streamed rather than spaced out."],
+  ["sp_p50", "Jump size", "Typical distance between objects, relative to circle size."],
+  ["vel_p50", "Cursor speed", "How fast the cursor has to travel to keep up."],
+  ["aim_speed_ratio", "Aim vs tapping", "Which of the two the map leans on."],
+  ["drain_time_s", "Length", "How long the map is."],
+];
+/* L'amplitude est une marge, en unites robustes. Mesure sur l'index complet :
+   0,1 se remarque a peine, 0,3 est l'ecart a partir duquel le moteur juge la
+   difference digne d'etre dite, 0,5 est le dernier palier ou il reste des maps
+   ordinaires a trouver. Trois mots couvrent donc toute la plage utile -- le
+   nombre, lui, ne dirait rien a personne. */
+const STEER_STEPS = [[0.2, "slightly "], [0.4, ""], [Infinity, "much "]];
+const STEER_MAX = 0.5;
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -622,7 +704,12 @@ const fmtTime = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padSt
 
 const DEFAULT_API = "https://api.ayreth.site";
 const LOCAL_API = "http://127.0.0.1:8000";
-const HOST = { api: "", onLocal: false, variants: ["nomod"], supports: [] };
+const HOST = {
+  api: "", onLocal: false, variants: ["nomod"], supports: [],
+  //: axe -> {more, less}, servi par /meta. Vide tant qu'aucun serveur n'a
+  //: repondu : la page ne connait pas le vocabulaire toute seule.
+  steerAxes: {},
+};
 
 /* Les parametres d'ARRIVEE, lus une fois. `syncUrl` reecrit l'URL des le
    premier changement de mode, donc relire `location.search` plus tard rendrait
@@ -744,6 +831,61 @@ function showHost(meta) {
     $("modeMany").title = "This server does not support multi-map search yet.";
   }
   if (!HOST.supports.includes("group_filter")) $("pills").classList.add("hidden");
+  buildSteer(meta);
+}
+
+/* Les sliders de direction, batis depuis /meta et pas depuis une liste ecrite
+   ici : un serveur plus ancien que cette page ne connait pas `steer`, et un
+   serveur plus recent peut avoir gagne un axe. Dans les deux cas la page doit
+   montrer ce que le serveur sait faire, pas ce qu'elle esperait. */
+function buildSteer(meta) {
+  HOST.steerAxes = Object.fromEntries(
+    (meta.steer_axes || []).map((entry) => [entry.axis, entry]));
+  const rows = STEER_ROWS.filter(([axis]) => HOST.steerAxes[axis]);
+  const usable = HOST.supports.includes("steer") && rows.length > 0;
+  $("panelS").classList.toggle("hidden", !usable);
+  if (!usable) {
+    // vider et pas seulement cacher : `steerValue` lit les curseurs, et un
+    // curseur cache qui vaut encore quelque chose est exactement le piege de
+    // la contrainte invisible deja paye avec le contre-exemple
+    $("steer").innerHTML = "";
+    return;
+  }
+
+  $("steer").innerHTML = rows.map(([axis, label, help]) =>
+    `<div class="row srow">` +
+    `<label title="${esc(help)}">${esc(label)}</label>` +
+    `<input type="range" id="s_${axis}" min="${-STEER_MAX}" max="${STEER_MAX}"` +
+    ` step="0.1" value="0" title="${esc(help)}"` +
+    ` aria-label="${esc(label)}">` +
+    `<output id="os_${axis}">straight</output></div>`).join("");
+
+  for (const input of $("steer").querySelectorAll("input")) {
+    input.addEventListener("input", syncLabels);
+    input.addEventListener("change", () => { if (lastPayload) runSearch(); });
+  }
+  syncLabels();
+}
+
+/* La phrase que l'utilisateur a demandee, dans les mots du serveur. */
+function steerPhrase(axis, amount) {
+  const words = HOST.steerAxes[axis];
+  if (!words || !amount) return "";
+  const grade = STEER_STEPS.find(([limit]) => Math.abs(amount) <= limit)[1];
+  return grade + (amount > 0 ? words.more : words.less);
+}
+
+/* La forme compacte attendue par l'API : `object_density:+0.3,sp_p50:-0.2`.
+   Rien du tout quand tous les curseurs sont au repos -- une chaine vide se
+   lirait comme une demande. */
+function steerValue() {
+  const asked = [];
+  for (const [axis] of STEER_ROWS) {
+    const input = $(`s_${axis}`);
+    const amount = input ? Number(input.value) : 0;
+    if (amount) asked.push(`${axis}:${amount}`);
+  }
+  return asked.length ? asked.join(",") : null;
 }
 
 /* ================= reglages ================= */
@@ -779,6 +921,20 @@ function syncLabels() {
   $("sumW").textContent = moved.length ? moved.join(" · ") : "all even";
   $("sumW").classList.toggle("on", moved.length > 0);
 
+  const asked = [];
+  for (const [axis] of STEER_ROWS) {
+    const input = $(`s_${axis}`);
+    if (!input) continue;
+    const amount = Number(input.value);
+    const phrase = steerPhrase(axis, amount);
+    $(`os_${axis}`).textContent = phrase || "straight";
+    $(`os_${axis}`).classList.toggle("on", Boolean(amount));
+    input.classList.toggle("on", Boolean(amount));
+    if (phrase) asked.push(phrase);
+  }
+  $("sumS").textContent = asked.length ? asked.join(" · ") : "straight ahead";
+  $("sumS").classList.toggle("on", asked.length > 0);
+
   const bits = [`${$("f_k").value} results`, `±${Number($("f_star").value).toFixed(1)}★`];
   if ($("f_div").value) bits.push("diverge " + GROUP_LABEL[$("f_div").value]);
   if ($("f_variant").value) bits.push($("f_variant").value);
@@ -801,6 +957,7 @@ function collectOptions() {
     avoid_checksum: avoid ? (avoid.checksum || null) : null,
     avoid_beatmap_id: avoid && !avoid.checksum ? avoid.beatmap_id : null,
     avoid_strength: Number($("f_avoid").value),
+    steer: steerValue(),
     weights: Object.fromEntries(GROUPS.map(([k]) => [k, Number($(`w_${k}`).value)])),
   };
 }
@@ -1102,13 +1259,27 @@ function render(data) {
   if (data.group_filter) bits.push(`differing mostly in ${GROUP_LABEL[data.group_filter]}`);
   if (data.diverge) bits.push(`diverging on ${GROUP_LABEL[data.diverge]}`);
   if (data.avoid) bits.push(`away from ${data.avoid.label}`);
+  // La direction est dite ICI et pas seulement dans son panneau : le panneau se
+  // replie, et une liste filtree par quelque chose d'invisible est le piege
+  // qu'on a deja paye avec le contre-exemple.
+  for (const [axis, amount] of Object.entries(data.steer || {})) {
+    bits.push(steerPhrase(axis, amount) || axis);
+  }
   if (data.variant && data.variant !== "nomod") bits.push(`${data.variant} corpus`);
   $("listTitle").textContent = bits.join(" · ");
   $("listTitle").classList.remove("hidden");
 
   if (!data.matches.length) {
-    $("results").innerHTML = `<div class="empty">
-      No candidate left. Widen the star range, or pick a different group above.</div>`;
+    // Zero resultat sous une direction n'est pas la meme panne que zero
+    // resultat tout court : c'est la demande qui est hors du corpus, et le seul
+    // conseil utile est de relacher le curseur, pas d'elargir les etoiles.
+    const asked = Object.entries(data.steer || {})
+      .map(([axis, amount]) => steerPhrase(axis, amount) || axis);
+    $("results").innerHTML = `<div class="empty">${asked.length
+      ? `Nothing in the corpus goes that far and still resembles this map: `
+        + `<b>${esc(asked.join(", "))}</b>. Ease the sliders in <b>Steer</b>.`
+      : "No candidate left. Widen the star range, or pick a different group above."
+    }</div>`;
     return;
   }
 
@@ -1304,6 +1475,12 @@ for (const input of document.querySelectorAll(
   input.addEventListener("input", syncLabels);
   input.addEventListener("change", () => { if (lastPayload) runSearch(); });
 }
+$("rstS").addEventListener("click", (event) => {
+  event.preventDefault();
+  for (const input of $("steer").querySelectorAll("input")) input.value = 0;
+  syncLabels();
+  if (lastPayload) runSearch();
+});
 $("rstW").addEventListener("click", (event) => {
   event.preventDefault();
   for (const [key] of GROUPS) $(`w_${key}`).value = 1;

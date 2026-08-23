@@ -116,20 +116,30 @@ average, so it looks for what they have in common. Each map is checked as you
 add it, and the page tells you when the average is stretched over a range of
 difficulty so wide that it may resemble none of them.
 
-Two more controls, in both modes:
+Three more controls, in both modes:
 
 - **Show me the ones that differ mostly in Aim / Speed / Rhythm / Spacing /
   Parameters** — sorts by *what* is different, not by how much.
 - **Less like this** — point at a map you do not want and the search moves away
   from it. This is `diverge` made concrete: instead of naming an abstract skill,
   you name a map.
+- **Steer** — *like this one, but denser*. Six sliders: density, streams, jump
+  size, cursor speed, aim-vs-tapping and length. Only maps that really clear the
+  gap you ask for stay in the list, so pushing too far can return nothing at
+  all — which is the honest answer: no map in the corpus goes that far and still
+  resembles yours. Nine more axes are available through the API.
+
+  Weights and Steer are easy to mix up: **weights** change what counts as
+  similar (same neighbours, measured differently), **steering** asks for
+  something deliberately different (other maps entirely).
 
 Searches are shareable: the URL carries `?b=131891` or
 `?ids=100695,1005019,1178810`.
 
-> The tosu overlay does **not** have these. It is driven by the map selected in
-> game, has no input field, and a corner of a second screen is the wrong place
-> to assemble a list of maps. Two uses, two interfaces.
+> The tosu overlay has **Steer** too, but not the two modes above nor the
+> counter-example: it is driven by the map selected in game, has no input field,
+> and a corner of a second screen is the wrong place to assemble a list of maps.
+> Sliders need no typing, so they fit; everything else does not.
 
 ## What is in this repository
 
@@ -225,6 +235,10 @@ it if it has an index. Nothing leaves your machine then. Otherwise it falls
 back to the hosted API. So the two ways of running this are not separate
 products: the overlay is the same either way, only the engine behind it
 changes.
+
+The **Steer** panel appears only when the server it reached knows about it. An
+overlay updated before the API is will simply not show the panel, rather than
+offering a control that answers 400.
 
 To point it at a different instance, add `?api=https://your.server` to the URL,
 or rebuild it with the address baked in:

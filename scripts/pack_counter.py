@@ -40,8 +40,9 @@ METADATA = {
     "authorLinks": ["https://github.com/Ayreth/OsuMapMatcher"],
     # tosu s'en sert pour proposer la mise a jour : sans montee de version, une
     # nouveaute de l overlay n atteint personne. 1.2.0 = icones ranked, loved,
-    # graveyard et pending.
-    "version": "1.2.0",
+    # graveyard et pending. 1.3.0 = le panneau Steer, "comme celle-ci mais plus
+    # dense".
+    "version": "1.3.0",
 }
 
 

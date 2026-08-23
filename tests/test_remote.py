@@ -297,3 +297,51 @@ def test_le_serveur_local_s_ouvre_au_counter_tosu(local_app, mini_corpus):
             "/api/v1/meta", headers={"Origin": "https://exemple-mechant.test"}
         )
         assert "access-control-allow-origin" not in etranger.headers
+
+
+# --- direction sur la route du serveur local ----------------------------------
+
+def test_la_route_locale_accepte_la_direction(local_app, mini_corpus, monkeypatch):
+    """
+    L'overlay tosu passe par `/api/similar`, pas par `/api/v1/similar` : c'est
+    une deuxieme surface, et une option ajoutee a l'API ne l'atteint pas toute
+    seule. Regression : les curseurs de l'overlay etaient sans effet en mode
+    local, la page les envoyait et le serveur les ignorait.
+    """
+    import numpy as np
+
+    from osumapmatcher.features import FEATURE_NAMES
+
+    remote = FakeRemote({})
+    place = FEATURE_NAMES.index("object_density")
+    with TestClient(local_app(remote, mode="local")) as client:
+        chercheur = server_module.state.searchers.get("nomod")
+        colonne = np.asarray(chercheur.vectors, dtype=np.float32)[:, place]
+        depart = int(np.argmin(colonne))
+        checksum = mini_corpus[depart][1]["checksum"]
+        server_module.state.current = _current(checksum)
+
+        large = "k=5&star_range=10&length_min=0.05&length_max=20"
+        sans = client.get(f"/api/similar?{large}").json()
+        avec = client.get(f"/api/similar?{large}&steer=object_density:0.3").json()
+        # l'index se ferme a la sortie du contexte : on lit les ecarts ici
+        ecarts = [
+            float(colonne[chercheur._position_of(m["checksum"])] - colonne[depart])
+            for m in avec["matches"]
+        ]
+
+    assert sans["steer"] is None
+    assert avec["steer"] == {"object_density": 0.3}
+    assert avec["matches"], "le mini corpus doit avoir des candidates plus denses"
+    assert [m["checksum"] for m in avec["matches"]] != \
+           [m["checksum"] for m in sans["matches"]]
+    assert all(ecart >= 0.3 - 1e-6 for ecart in ecarts), ecarts
+
+
+def test_une_direction_illisible_est_refusee_par_la_route_locale(local_app,
+                                                                 mini_corpus):
+    remote = FakeRemote({})
+    with TestClient(local_app(remote, mode="local")) as client:
+        server_module.state.current = _current(mini_corpus[0][1]["checksum"])
+        assert client.get("/api/similar?steer=nawak:0.3").status_code == 400
+        assert client.get("/api/similar?steer=nimportequoi").status_code == 400

@@ -6,6 +6,145 @@ running than a number would.
 
 ---
 
+## 2026-08-23 — like this one, but denser
+
+Until now you could say *like this one* and *not like that one*. You can now say
+*like this one, **but denser*** — or with wider jumps, or fewer streams. Additive
+again: the feature version is still `8e824c8319c6`, no index was rebuilt, and a
+client that ignores `steer` sees exactly what it saw yesterday.
+
+### What it does
+
+`steer` names an axis and a signed amount. Only maps that really clear that much
+of a gap stay in the pool; they are then ranked by ordinary distance to the
+target, exactly as before.
+
+```bash
+curl -s "https://api.ayreth.site/api/v1/similar?beatmap_id=21454&steer=object_density:+0.3"
+```
+
+or, in a JSON body, `"steer": {"object_density": 0.3, "sp_p50": -0.5}`.
+
+The axis names come from the same table as the sentences printed under every
+result — a control labelled "denser" and an explanation reading "denser
+(3.7 → 5.3 obj/s)" name the same column, and there is only one list of them.
+`/api/v1/meta` now serves it as `steer_axes`, and announces `steer` in
+`supports`.
+
+### Why a filter and not a nudge
+
+Three designs were built and measured on the full 160,905-map index, on three
+targets from 3.97★ to 6.91★, six axes, both directions.
+
+**Translating the query** — move the probe along the axis and rank by distance
+to that point — is *inert*, which was the surprise. Up to a displacement of 2
+robust units the top ten are **exactly** the results of the plain search, and
+their median density moves by +0.44 obj/s. The arithmetic says why: ranking by
+`‖x − (v + δe)‖²` is ranking by `‖x − v‖² − 2δ(xᵢ − vᵢ)`, and since the 96
+features are correlated, a map that is clearly denser is also further away on
+the other 95. Nothing reorders until the probe has left the data entirely. On
+`drain_time_s` it was worse than useless: at δ = 0.5 it returned maps **125 s
+shorter** than the query.
+
+**A sign filter** (`x > target`) never leaves the manifold but has no dial, as
+expected: it returned +0.20 obj/s, or +5%. Nobody calls that denser.
+
+**A margin filter** (`x ≥ target + δ`) is what shipped. It has a dial, and it
+doses for a mechanical reason: ranking by distance to the target prefers the
+smallest possible overshoot, so the gap you get lands *on* the margin you asked
+for instead of sailing past it.
+
+The translation was not wasted, though — it is the right way to *retrieve*. The
+probe sent to the ANN index is projected onto the constraint, which is the point
+of the constraint closest to the target, so beyond 30,000 candidates the
+approximate pass looks where the survivors actually live. Verified: exact and
+ANN paths return the same ten maps.
+
+### Measured
+
+On a 5.57★ query, 10,901 candidates, best plain neighbour at distance 2.005:
+
+| `steer` on `object_density` | candidates left | gap obtained | distance to target |
+|---|---|---|---|
+| +0.1 | 47.2% | +0.59 obj/s | 2.294 |
+| +0.2 | 20.5% | +1.09 obj/s | 2.615 |
+| **+0.3** | **7.9%** | **+1.54 obj/s** | **2.850** |
+| +0.5 | 1.8% | +2.54 obj/s | 4.174 |
+| +1.0 | 0.3% | +5.10 obj/s | 7.340 |
+
+That last row is why 1.0 is the cap: its results carry clipped coordinates,
+which is the corpus's outliers rather than maps anyone plays. The useful range
+is 0.1 to 0.5.
+
+A side effect worth having: steering makes a search *faster*, because it removes
+candidates rather than sorting them — 2.2 ms against 10.4 ms on the real index.
+
+### On both interfaces
+
+`/explore` **and the tosu overlay** gain a **Steer** panel with six sliders:
+density, streams, jump size, cursor speed, aim-vs-tapping and length. Each one
+reads back the phrase you asked for — "denser", "much wider jumps", "slightly
+shorter" — in the server's own words, read from `/meta` rather than copied into
+the page. The active direction is repeated above the results, because a list
+filtered by something folded away in a panel is a trap this project has already
+paid for.
+
+The overlay was going to be left out — no input field, a corner of a second
+screen — and then it turned out six sliders fit fine, because unlike a list of
+seed maps they need no typing. It is **counter version 1.3.0**; tosu offers the
+update on its own. Its local route `/api/similar` learned `steer` too, so the
+sliders work whether the overlay is served by `start.bat` or by tosu itself.
+
+A panel neither page can use is a panel neither page shows: both read
+`supports` from `/meta` and hide the whole thing when the server they reached is
+older than they are. Verified against the live API before this release was
+deployed — the overlay simply had no Steer panel, rather than a 400.
+
+Nine more axes exist and stay available through the API. Fifteen sliders is an
+interface nobody opens.
+
+### Two things that were confusing
+
+**Weights and Steer read as the same idea and are not.** Both panels now say
+which is which, in one line each: weights decide *what counts as similar*
+(the same neighbours, measured differently); steering decides *what should be
+different* (other maps entirely). They are also cross-referenced, since the
+confusion only shows up when you see one and think of the other.
+
+**"Diverge on" explained nothing.** It had a tooltip; nothing said so. The label
+is now dotted-underlined with a help cursor, the text says what actually happens
+("same difficulty, opposite challenge — close on every group except this one,
+then ranked by how far they are on it"), and the dropdown itself carries it too,
+for whoever hovers the control rather than its name.
+
+### Known limitations
+
+- **Push too far and the list comes back empty**, and that is the honest answer
+  rather than a bug: nothing in the corpus is that much denser *and* still
+  similar. The page says which sliders to ease. There is no "give me the closest
+  I can get" fallback — it would mean labelling maps as denser when they are
+  not.
+- **The same amount does not bite equally on every axis.** `+0.3` on jump size
+  leaves 43% of the candidates standing; on density it leaves 8%; on a target
+  that already sits at the edge of the scale it can leave none. The number is a
+  guaranteed *margin*, not a difficulty setting, and how many maps clear it is a
+  property of the corpus.
+- **The sliders act one axis at a time and they compound.** Asking for three
+  strong directions at once is asking for a map that may simply not exist; the
+  page will tell you, but it cannot trade one axis off against another.
+- The direction is **not** carried in the shareable URL. `?b=131891` still only
+  identifies the question, not the settings, so a link you paste in a chat opens
+  on an unsteered search.
+- **The overlay still does not get the multi-map mode or the counter-example**,
+  and for the reason steering turned out not to share: those need a list to
+  assemble and a result to point at. Steering needs neither.
+- The two interfaces now duplicate the axis list, one copy each. They have
+  always duplicated their stylesheet for the same reason — the overlay must stay
+  a single file tosu can serve — so a test compares the two lists and fails if
+  an axis is added on one side only.
+
+---
+
 ## 2026-08-22 (evening) — ask with several maps, or against one
 
 Three questions the engine could not express before, and a page to ask them

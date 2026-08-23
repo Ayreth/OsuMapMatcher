@@ -23,14 +23,19 @@ Recherche : pre-filtrage SQL (bande d'etoiles, longueur, meme beatmapset), puis
 distance exacte ponderee par groupe sur les seuls candidats retenus. L'index ANN
 prend le relais quand le pre-filtrage laisse trop de candidats.
 
-Trois facons de poser la question, toutes servies par la meme `Searcher.search` :
+Quatre facons de poser la question, toutes servies par la meme
+`Searcher.search` :
 
   * une map           -- le cas d'origine ;
   * plusieurs maps    -- `combine_targets` en fait un centroide, et la bande
     d'etoiles couvre alors de la plus facile a la plus dure au lieu du centre,
     sans quoi deux graines eloignees s'excluraient mutuellement du resultat ;
   * une map et un contre-exemple -- `avoid`, qui penalise la proximite au
-    repoussoir. Le choix de la formule est mesure et explique dans `search`.
+    repoussoir. Le choix de la formule est mesure et explique dans `search` ;
+  * une map et une direction -- `steer`, "comme celle-ci, mais plus dense" :
+    une marge signee sur un axe nomme, qui retire du jeu les candidates ne la
+    franchissant pas. Les trois conceptions essayees et les mesures qui ont fait
+    choisir celle-la sont dans `search`.
 
 Et une facon de trier ce qui en sort : `group_filter`, qui ne garde que les maps
 dont l'ecart vient surtout d'un groupe donne. Il ne coute rien, `group_share`
@@ -62,9 +67,9 @@ from .features import (
 __all__ = [
     "VARIANTS", "variant_for_mods", "Scaler", "Searcher", "SearcherSet",
     "Match", "QueryTarget", "SeedRef", "combine_targets",
-    "build", "explain", "song_key", "normalise_weights",
+    "build", "explain", "song_key", "normalise_weights", "normalise_steer",
     "DEFAULT_STAR_RANGE", "DEFAULT_LENGTH_RATIO", "DEFAULT_AVOID_STRENGTH",
-    "DUMP_STATUS", "RANKED_STATUSES",
+    "DUMP_STATUS", "RANKED_STATUSES", "STEER_AXES", "MAX_STEER",
 ]
 
 SCALER_FILE = "scaler.npz"
@@ -138,6 +143,12 @@ DEFAULT_AVOID_STRENGTH = 0.30
 #: ou la recherche ordinaire trouve 1,11. La raison est geometrique, voir `search`.
 MAX_AVOID_STRENGTH = 0.75
 
+#: amplitude maximale d'un axe directionnel, en unites robustes (celles du
+#: scaler). Mesuree sur l'index reel : a 1,0 la moitie des axes ne garde plus
+#: aucun candidat, et ceux qui en gardent rendent des maps dont plusieurs
+#: coordonnees sont ecretees a +/-5, c'est-a-dire les aberrations du corpus.
+#: Le travail utile se fait entre 0,1 et 0,5 ; le tableau est dans `search`.
+MAX_STEER = 1.0
 
 
 # --- scaler -------------------------------------------------------------------
@@ -497,6 +508,17 @@ _EXPLAIN_RESOLVED = tuple(
     if name in _FEATURE_POSITION
 )
 
+#: axes ouverts a la recherche directionnelle, et le mot qui va avec chaque sens.
+#: Derives d'EXPLAIN_SPEC et de rien d'autre : c'est ce qui garantit qu'un
+#: reglage "denser" et une explication "denser (2.4 -> 3.9 obj/s)" designent la
+#: meme colonne. Deux vocabulaires paralleles finiraient par diverger, et
+#: l'interface promettrait une chose en montrant l'autre.
+STEER_AXES: dict[str, tuple[str, str]] = {
+    name: (more, less)
+    for name, more, less, _same, _fmt in EXPLAIN_SPEC
+    if name in _FEATURE_POSITION
+}
+
 
 def _format(spec: str, value: float) -> str:
     if spec == "mmss":
@@ -560,6 +582,36 @@ def normalise_weights(weights: dict[str, float] | None) -> dict[str, float]:
         resolved[group] = max(0.0, float(value))
     if all(value == 0.0 for value in resolved.values()):
         raise ValueError("Every weight is zero, no distance can be computed.")
+    return resolved
+
+
+def normalise_steer(steer: dict[str, float] | None) -> dict[str, float]:
+    """
+    Valide une demande directionnelle, et jette ce qui ne demande rien.
+
+    L'amplitude est signee et s'exprime en unites robustes, celles du scaler :
+    `+0.3` sur `object_density` veut dire "au moins 0,3 unite plus dense", soit
+    +1,36 obj/s sur l'index reel. Le signe suit `STEER_AXES` : positif pour le
+    premier mot ("denser"), negatif pour le second ("less dense").
+
+    Une amplitude nulle n'est pas une erreur mais un reglage au repos : une
+    interface a sliders en enverra a chaque recherche. La retirer ici evite
+    d'avoir a la reconnaitre partout ailleurs.
+    """
+    resolved: dict[str, float] = {}
+    for axis, amount in (steer or {}).items():
+        if axis not in STEER_AXES:
+            raise KeyError(f"Unknown steer axis: {axis}")
+        value = float(amount)
+        if not math.isfinite(value):
+            raise ValueError(f"Steer amount for {axis} must be a finite number.")
+        if abs(value) > MAX_STEER:
+            raise ValueError(
+                f"Steer amount for {axis} must be between "
+                f"-{MAX_STEER} and {MAX_STEER}."
+            )
+        if value != 0.0:
+            resolved[axis] = value
     return resolved
 
 
@@ -766,6 +818,10 @@ class Searcher:
         # tres bien tourner sur un ancien zip avec un code a jour.
         self.has_status = self._has_column("status")
         self._filters = self._load_filters()
+        #: colonnes scalees deja montees en memoire, par indice de feature.
+        #: Remplie a la demande par `_scaled_column`, jamais videe : il y a au
+        #: plus quinze axes directionnels, donc 15 x 644 ko sur l'index reel.
+        self._columns: dict[int, np.ndarray] = {}
 
     # -- colonnes de filtrage --------------------------------------------------
 
@@ -812,6 +868,24 @@ class Searcher:
             if self.has_status:
                 unranked[position] = row["status"] not in RANKED_STATUSES
         return stars, lengths, sets, valid, unranked
+
+    def _scaled_column(self, position: int) -> np.ndarray:
+        """
+        Une colonne du tableau de vecteurs, montee en memoire une bonne fois.
+
+        Les vecteurs sont mappes en memoire et ranges par ligne : lire une
+        colonne traverse tout le fichier (62 Mo sur l'index reel, 17 ms pages
+        chaudes, une lecture disque complete a froid). Une recherche
+        directionnelle relit la meme colonne a chaque appel -- autant la garder.
+
+        Pas de verrou : au pire deux threads calculent la meme colonne et l'un
+        ecrase l'autre avec une valeur identique.
+        """
+        cached = self._columns.get(position)
+        if cached is None:
+            cached = np.array(self.vectors[:, position], dtype=np.float32)
+            self._columns[position] = cached
+        return cached
 
     def _position_of(self, checksum: str) -> int:
         with self._db_lock:
@@ -886,6 +960,7 @@ class Searcher:
         exclude_same_set: bool,
         allow_unranked: bool = True,
         avoid: QueryTarget | None = None,
+        steer: dict[str, float] | None = None,
     ) -> np.ndarray:
         stars, lengths, sets, valid, unranked = self._filters
         # `star_span` vaut (stars, stars) pour une cible ordinaire : la bande
@@ -901,6 +976,16 @@ class Searcher:
                 keep &= lengths >= length_low * length_ratio[0]
             if length_high > 0:
                 keep &= lengths <= length_high * length_ratio[1]
+        # La direction se filtre ICI, avant le test sur EXACT_LIMIT : elle
+        # retire des candidats au lieu d'en trier, donc elle rapproche du chemin
+        # exact au lieu d'obliger l'ANN a sur-echantillonner. Le seuil est en
+        # unites robustes, celles-la memes dans lesquelles les vecteurs vivent.
+        for axis, amount in (steer or {}).items():
+            position = _FEATURE_POSITION[axis]
+            column = self._scaled_column(position)
+            threshold = float(target.vector[position]) + amount
+            keep &= column >= threshold if amount > 0 else column <= threshold
+
         excluded_sets = set(target.excluded_sets)
         excluded_checksums = set(target.excluded_checksums)
         if avoid is not None:
@@ -941,6 +1026,7 @@ class Searcher:
         group_filter: str | None = None,
         avoid: QueryTarget | None = None,
         avoid_strength: float = DEFAULT_AVOID_STRENGTH,
+        steer: dict[str, float] | None = None,
     ) -> list[Match]:
         """
         Les voisins de `target`, filtres puis classes.
@@ -974,9 +1060,76 @@ class Searcher:
             0.50      1.188        1.471                 5/10
             0.90      2.585        2.966                 0/10
 
+        `steer` est la direction : "comme celle-ci, mais plus dense". Chaque axe
+        d'EXPLAIN_SPEC y recoit une amplitude signee en unites robustes, et la
+        recherche ne garde que les candidates qui franchissent reellement le
+        seuil correspondant -- `x_i >= v_i + delta` -- avant de les classer par
+        distance ordinaire a la cible.
+
+        Trois conceptions ont ete essayees sur l'index reel (160 905 maps), sur
+        trois cibles a 3,97, 5,57 et 6,91 etoiles, six axes, les deux sens.
+
+          1. Translation seule -- deplacer le point sonde de `delta*e_i` et
+             classer par distance a ce point. Mesuree INERTE. Sur neoMAX
+             (5,57 etoiles), axe `object_density`, les dix premiers resultats
+             sont exactement ceux de la recherche sans direction jusqu'a
+             delta = 2, et leur densite mediane ne bouge que de +0,44 obj/s. La
+             raison se lit dans le score : classer par ||x - (v + delta*e_i)||^2
+             revient a classer par ||x - v||^2 - 2*delta*(x_i - v_i). Pour qu'une
+             map plus dense passe devant, ce terme doit compenser ce qu'elle perd
+             sur les 95 autres colonnes -- et les features etant correlees, une
+             map nettement plus dense est aussi loin ailleurs. Il faudrait
+             delta ~ 5, c'est-a-dire un point sonde hors des donnees. Pire : sur
+             `drain_time_s` a delta = 0,5 elle rendait des maps 125 s PLUS
+             COURTES que la cible.
+          2. Filtre de signe -- ne garder que `x_i > v_i`. Jamais hors variete,
+             mais ne dose rien, exactement comme annonce : sur la meme cible il
+             rend +0,20 obj/s, soit +5 %. Personne n'appelle ca "plus dense".
+          3. Filtre a marge, RETENU -- `x_i >= v_i + delta`. Il dose, et pour une
+             raison mecanique : classer par distance a la cible prefere le plus
+             petit depassement possible, donc l'ecart obtenu se pose SUR la marge
+             demandee au lieu de la survoler. C'est la conception 2 munie du seul
+             reglage qui lui manquait.
+
+        Ce que ca donne et ce que ca coute, sur neoMAX (5,57 etoiles, 10 901
+        candidats, meilleur voisin sans direction a d = 2,005) :
+
+            axe / delta   survivants   ecart brut obtenu   d(cible)
+            densite 0.1     47.2 %       +0.59 obj/s        2.294
+            densite 0.2     20.5 %       +1.09 obj/s        2.615
+            densite 0.3      7.9 %       +1.54 obj/s        2.850
+            densite 0.5      1.8 %       +2.54 obj/s        4.174
+            densite 1.0      0.3 %       +5.10 obj/s        7.340
+            jumps   0.3     42.9 %       +1.24 r            2.740
+            jumps   0.5     17.6 %       +1.67 r            3.187
+            jumps   1.0      0.3 %       +3.31 r            4.781
+
+        C'est ce tableau qui fixe MAX_STEER a 1,0 : passe 0,5 les survivants se
+        comptent en dizaines, et a 1,0 les resultats de l'axe densite portent en
+        moyenne 1,1 coordonnee ecretee a +/-5 -- on a quitte les maps ordinaires
+        pour les aberrations du corpus. Le travail utile se fait entre 0,1 et
+        0,5, et 0,30 y est un reperage utile : c'est EXPLAIN_DIFF_THRESHOLD,
+        l'ecart a partir duquel `explain` juge une difference digne d'etre dite.
+        Demander 0,30 rend donc l'axe ELIGIBLE a sa propre phrase -- pas certain
+        de l'obtenir, `explain` ne gardant que les trois plus gros ecarts, et un
+        deplacement franc sur un axe en entraine d'autres avec lui.
+
+        Le point sonde suit la direction sans jamais classer : il est PROJETE sur
+        la contrainte (`probe_i = max(probe_i, v_i + delta)`), c'est-a-dire pose
+        sur le point de la contrainte le plus proche de la cible. Au-dela
+        d'EXACT_LIMIT candidats l'ANN degrossit donc la ou vivent les survivants
+        et non autour d'un point qu'aucun d'eux n'entoure : la translation,
+        inutile pour classer, est le bon pre-tri.
+
+        Si aucun candidat ne franchit la marge -- axe deja au bord de l'ecretage,
+        amplitude trop forte, corpus trop etroit -- la reponse est une liste
+        vide, comme pour `group_filter`. Rendre les moins pires en pretendant
+        qu'elles sont plus denses serait un mensonge de plus.
+
         `Match.distance` reste la vraie distance a la cible : le score penalise
-        classe, il ne s'affiche pas. Un pourcentage de similarite qui bougerait
-        parce qu'on a nomme un repoussoir mentirait sur ce qu'il mesure.
+        classe, il ne s'affiche pas, et la direction filtre sans deformer la
+        distance non plus. Un pourcentage de similarite qui bougerait parce qu'on
+        a nomme un repoussoir ou pousse un axe mentirait sur ce qu'il mesure.
         """
         if diverge and diverge not in GROUP_NAMES:
             raise KeyError(f"Unknown diverge group: {diverge}")
@@ -988,6 +1141,7 @@ class Searcher:
             )
         resolved = normalise_weights(weights)
         weight_vector = _weight_vector(resolved)
+        directions = normalise_steer(steer)
 
         candidates = self._candidates(
             target,
@@ -996,6 +1150,7 @@ class Searcher:
             exclude_same_set=exclude_same_set,
             allow_unranked=allow_unranked,
             avoid=avoid,
+            steer=directions,
         )
         if candidates.size == 0:
             return []
@@ -1009,6 +1164,21 @@ class Searcher:
             probe = (target.vector - avoid_strength * avoid.vector) / (
                 1.0 - avoid_strength
             )
+        if directions:
+            # Projection du point sonde sur la contrainte directionnelle : le
+            # point le plus proche, dans le demi-espace ou vivent les seuls
+            # candidats encore admissibles. Sans repoussoir ca vaut exactement
+            # `v_i + delta`. `max` et pas `+` : si le point extrapole du
+            # repoussoir est deja au-dela du seuil, l'y ramener l'eloignerait
+            # des maps que le score va classer en tete.
+            probe = np.array(probe, dtype=np.float32)
+            for axis, amount in directions.items():
+                position = _FEATURE_POSITION[axis]
+                threshold = float(target.vector[position]) + amount
+                probe[position] = (
+                    max(float(probe[position]), threshold) if amount > 0
+                    else min(float(probe[position]), threshold)
+                )
 
         # L'index ANN classe par distance totale ; en mode divergence on cherche
         # au contraire les plus eloignes sur un groupe, donc son pre-tri
@@ -1017,8 +1187,14 @@ class Searcher:
             # Trop de candidats pour un scoring exact : l'index ANN degrossit,
             # puis on re-score exactement les survivants du filtre.
             # un groupe dominant sur cinq : sans elargir ici, le filtre couperait
-            # dans une liste deja tronquee par l'ANN et rendrait moins de k
-            wanted = min(k * OVERSAMPLE * (5 if group_filter else 1), int(self.index.size))
+            # dans une liste deja tronquee par l'ANN et rendrait moins de k.
+            # Chaque axe directionnel demande le meme egard, pour une raison
+            # geometrique : le point sonde est POSE sur la frontiere de la
+            # contrainte, donc a peu pres la moitie de ce qui l'entoure est du
+            # mauvais cote et sera rejete par le pre-filtrage.
+            widen = 5 if group_filter else 1
+            widen *= 2 ** len(directions)
+            wanted = min(k * OVERSAMPLE * widen, int(self.index.size))
             # ceinture et bretelles : la cible peut venir d'un appelant qui a
             # fabrique son vecteur autrement (l'API distante, par exemple)
             hits = self.index.search(

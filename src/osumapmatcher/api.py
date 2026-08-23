@@ -27,6 +27,13 @@ liste de checksums et de beatmap_ids, en fait un centroide et rend ses voisins.
 La reponse garde la meme forme que les autres ; seul `query` change de sens et
 decrit l'ensemble des graines.
 
+Les reglages, eux, vivent tous dans `SearchOptions` et `options_from_query`, une
+seule fois : c'est ce qui fait qu'un ajout arrive d'un coup sur `/similar`,
+`/similar/multi` et `/similar/file` au lieu d'etre recopie trois fois. Le
+dernier en date est `steer`, la direction -- "comme celle-ci, mais plus dense" --
+qui s'ecrit `object_density:+0.3,sp_p50:-0.5` dans une query string et comme un
+dict en JSON.
+
 Garde-fous, tous reglables par variable d'environnement : CORS, jeton optionnel,
 seau a jetons par IP, taille d'upload bornee, semaphore sur le travail CPU. Et
 surtout le controle de version du jeu de features : un vecteur calcule avec un
@@ -67,7 +74,7 @@ from typing import Any, Callable
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from .features import (
     FEATURE_NAMES,
@@ -82,10 +89,13 @@ from .index import (
     DEFAULT_AVOID_STRENGTH,
     DEFAULT_STAR_RANGE,
     MAX_AVOID_STRENGTH,
+    MAX_STEER,
+    STEER_AXES,
     QueryTarget,
     Searcher,
     SearcherSet,
     combine_targets,
+    normalise_steer,
 )
 from .paths import index_root
 
@@ -435,6 +445,38 @@ class Weights(BaseModel):
     parameters: float = Field(1.0, ge=0.0, le=2.0)
 
 
+def parse_steer(raw: str) -> dict[str, float]:
+    """
+    Lit la forme compacte `object_density:+0.3,sp_p50:-0.5`.
+
+    Une direction est un dict en JSON, mais une query string n'a pas de dict :
+    quinze parametres `steer_object_density=...` seraient illisibles et
+    obligeraient a en ajouter un a chaque nouvel axe. Une seule chaine tient
+    dans une URL qu'on peut copier-coller.
+
+    Ne valide QUE la forme. Les noms d'axes et les bornes appartiennent a
+    `normalise_steer` dans index.py, seul endroit qui doit en decider -- et ses
+    erreurs deviennent des 400 en passant par `Service.search`.
+    """
+    directions: dict[str, float] = {}
+    for chunk in raw.split(","):
+        item = chunk.strip()
+        if not item:
+            continue
+        axis, separator, amount = item.partition(":")
+        if not separator or not axis.strip():
+            raise ValueError(
+                f"steer item {item!r} should look like 'object_density:+0.3'."
+            )
+        try:
+            directions[axis.strip()] = float(amount.strip())
+        except ValueError:
+            raise ValueError(
+                f"steer amount {amount.strip()!r} is not a number."
+            ) from None
+    return directions
+
+
 class SearchOptions(BaseModel):
     """Les memes reglages que la page locale, aux memes bornes."""
 
@@ -457,11 +499,32 @@ class SearchOptions(BaseModel):
     avoid_strength: float = Field(
         DEFAULT_AVOID_STRENGTH, ge=0.0, le=MAX_AVOID_STRENGTH
     )
+    #: la direction : "comme celle-ci, mais plus dense". Un dict axe ->
+    #: amplitude signee en unites robustes, accepte aussi sous la forme compacte
+    #: `object_density:+0.3,sp_p50:-0.5` pour tenir dans une query string.
+    steer: dict[str, float] = Field(default_factory=dict)
     weights: Weights = Field(default_factory=Weights)
+
+    @field_validator("steer", mode="before")
+    @classmethod
+    def _accepte_la_forme_compacte(cls, value: Any) -> Any:
+        return parse_steer(value) if isinstance(value, str) else (value or {})
 
     @property
     def wants_avoid(self) -> bool:
         return bool(self.avoid_checksum or self.avoid_beatmap_id)
+
+    @property
+    def applied_steer(self) -> dict[str, float]:
+        """
+        La direction telle qu'elle sera REELLEMENT appliquee.
+
+        `normalise_steer` jette les amplitudes nulles. La reponse doit renvoyer
+        ce qui a ete fait et non ce qui a ete tape, sinon un slider au repos s'y
+        relit comme un slider actif -- et une page qui rejoue une recherche
+        depuis sa propre reponse remonterait ses curseurs a zero pour rien.
+        """
+        return normalise_steer(self.steer)
 
     def search_kwargs(self, avoid: QueryTarget | None = None) -> dict[str, Any]:
         """
@@ -482,6 +545,7 @@ class SearchOptions(BaseModel):
             "group_filter": self.group_filter or None,
             "avoid": avoid,
             "avoid_strength": self.avoid_strength,
+            "steer": self.steer or None,
         }
 
 
@@ -575,6 +639,10 @@ def _reply(
         "variant": variant,
         "diverge": options.diverge or None,
         "group_filter": options.group_filter or None,
+        # la direction telle qu'elle a ete COMPRISE, comme le repoussoir : un
+        # client qui a envoye la forme compacte doit pouvoir verifier ce que le
+        # serveur en a fait, et une page qui rejoue une recherche la relit ici
+        "steer": options.applied_steer or None,
         # le repoussoir est renvoye tel qu'il a ete compris, pas tel qu'il a ete
         # demande : un client qui l'a nomme par beatmap_id doit pouvoir verifier
         # sur quelle map il est reellement tombe
@@ -730,33 +798,45 @@ def build_router(service: SearchService) -> APIRouter:
         avoid_strength: float = Query(
             DEFAULT_AVOID_STRENGTH, ge=0.0, le=MAX_AVOID_STRENGTH
         ),
+        steer: str | None = Query(
+            None,
+            description="Directional axes, e.g. object_density:+0.3,sp_p50:-0.5",
+        ),
         w_aim: float = Query(1.0, ge=0.0, le=2.0),
         w_speed: float = Query(1.0, ge=0.0, le=2.0),
         w_rhythm: float = Query(1.0, ge=0.0, le=2.0),
         w_spacing: float = Query(1.0, ge=0.0, le=2.0),
         w_parameters: float = Query(1.0, ge=0.0, le=2.0),
     ) -> SearchOptions:
-        return SearchOptions(
-            k=k,
-            star_range=star_range,
-            length_min=length_min,
-            length_max=length_max,
-            exclude_same_set=exclude_same_set,
-            max_per_song=max_per_song,
-            diverge=diverge,
-            allow_unranked=allow_unranked,
-            group_filter=group_filter,
-            avoid_checksum=avoid_checksum,
-            avoid_beatmap_id=avoid_beatmap_id,
-            avoid_strength=avoid_strength,
-            weights=Weights(
-                aim=w_aim,
-                speed=w_speed,
-                rhythm=w_rhythm,
-                spacing=w_spacing,
-                parameters=w_parameters,
-            ),
-        )
+        try:
+            return SearchOptions(
+                k=k,
+                star_range=star_range,
+                length_min=length_min,
+                length_max=length_max,
+                exclude_same_set=exclude_same_set,
+                max_per_song=max_per_song,
+                diverge=diverge,
+                allow_unranked=allow_unranked,
+                group_filter=group_filter,
+                avoid_checksum=avoid_checksum,
+                avoid_beatmap_id=avoid_beatmap_id,
+                avoid_strength=avoid_strength,
+                steer=steer,
+                weights=Weights(
+                    aim=w_aim,
+                    speed=w_speed,
+                    rhythm=w_rhythm,
+                    spacing=w_spacing,
+                    parameters=w_parameters,
+                ),
+            )
+        except ValidationError as exc:
+            # Le modele est construit ICI, dans le corps de la dependance, donc
+            # FastAPI ne voit pas passer l'erreur et rendrait un 500 sur un
+            # `steer` mal ecrit. Les autres champs sont deja bornes par `Query`
+            # et ne peuvent pas arriver jusqu'ici.
+            raise HTTPException(400, exc.errors()[0].get("msg", "invalid query"))
 
     async def read_body(request: Request) -> bytes:
         """Lit le corps en refusant tot ce qui depasse la taille autorisee."""
@@ -845,11 +925,19 @@ def build_router(service: SearchService) -> APIRouter:
             # est publiee et celui ou le VPS est redeploye, elle tombe sur un
             # serveur qui ignore /similar/multi. Mieux vaut qu'elle le lise ici
             # et masque le bouton que d'envoyer une requete qui rend 404.
-            "supports": ["multi", "group_filter", "avoid"],
+            "supports": ["multi", "group_filter", "avoid", "steer"],
+            # Le vocabulaire de la recherche directionnelle, servi plutot que
+            # recopie dans la page : les memes mots que sous chaque resultat,
+            # et une page publiee reste juste quand un axe est ajoute ici.
+            "steer_axes": [
+                {"axis": axis, "more": more, "less": less}
+                for axis, (more, less) in STEER_AXES.items()
+            ],
             "limits": {
                 "k_max": 100,
                 "max_seeds": MAX_SEEDS,
                 "avoid_strength_max": MAX_AVOID_STRENGTH,
+                "steer_max": MAX_STEER,
                 "max_upload_bytes": config.max_upload,
                 "rate_per_minute": config.rate_per_minute,
                 "file_cost": config.file_cost,

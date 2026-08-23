@@ -36,7 +36,7 @@ from typing import Any
 from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
 
-from .api import ApiConfig, SearchService, build_router
+from .api import ApiConfig, SearchService, build_router, parse_steer
 from .features import GROUP_NAMES
 from .index import DEFAULT_STAR_RANGE, QueryTarget, Searcher, SearcherSet
 from .paths import index_root
@@ -270,6 +270,7 @@ def create_app(
         max_per_song: int = Query(1, ge=0, le=10),
         diverge: str | None = None,
         allow_unranked: bool = True,
+        steer: str | None = None,
         w_aim: float = Query(1.0, ge=0.0, le=2.0),
         w_speed: float = Query(1.0, ge=0.0, le=2.0),
         w_rhythm: float = Query(1.0, ge=0.0, le=2.0),
@@ -285,6 +286,9 @@ def create_app(
             "max_per_song": max_per_song,
             "diverge": diverge or None,
             "allow_unranked": allow_unranked,
+            # transmise telle quelle : le distant la relit avec le meme
+            # `parse_steer`, et `_url` laisse tomber ce qui est vide
+            "steer": steer or None,
             "w_aim": w_aim, "w_speed": w_speed, "w_rhythm": w_rhythm,
             "w_spacing": w_spacing, "w_parameters": w_parameters,
         }
@@ -450,6 +454,7 @@ def _search_local(checksum: str | None, options: dict[str, Any]) -> dict[str, An
                 max_per_song=options["max_per_song"],
                 diverge=options["diverge"],
                 allow_unranked=options.get("allow_unranked", True),
+                steer=parse_steer(options.get("steer") or ""),
             )
     except (KeyError, ValueError) as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -467,6 +472,7 @@ def _search_local(checksum: str | None, options: dict[str, Any]) -> dict[str, An
         },
         "variant": variant,
         "diverge": options["diverge"],
+        "steer": parse_steer(options.get("steer") or "") or None,
         "count": len(matches),
         "matches": [match.as_dict() for match in matches],
         "source": "corpus",

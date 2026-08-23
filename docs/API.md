@@ -130,11 +130,16 @@ curl -s https://api.example.com/api/v1/meta
   "groups": ["aim", "speed", "rhythm", "spacing", "parameters"],
   "variants": ["nomod", "DT"],
   "n_maps": { "nomod": 151558, "DT": 151329 },
-  "supports": ["multi", "group_filter", "avoid"],
+  "supports": ["multi", "group_filter", "avoid", "steer"],
+  "steer_axes": [
+    { "axis": "object_density", "more": "denser", "less": "less dense" },
+    { "axis": "sp_p50", "more": "wider jumps", "less": "tighter jumps" }
+  ],
   "limits": {
     "k_max": 100,
     "max_seeds": 20,
     "avoid_strength_max": 0.75,
+    "steer_max": 1.0,
     "max_upload_bytes": 4000000,
     "rate_per_minute": 120,
     "file_cost": 5,
@@ -144,6 +149,12 @@ curl -s https://api.example.com/api/v1/meta
 ```
 
 `feature_names` is the column order for the compact `vector` form.
+
+`steer_axes` is the vocabulary of the directional search: every axis you may
+push, with the word for each direction. Those are the same words that appear in
+a match's `differences`, on purpose — a control labelled "denser" and a sentence
+saying "denser" name the same column. Read the list rather than hard-coding it;
+it is 15 entries today and may grow.
 
 `supports` lists the optional capabilities this instance has. A hosted instance
 is updated by pulling and rebuilding, so a client can easily be newer than the
@@ -345,6 +356,7 @@ query parameters on the GET and file endpoints, and as top-level JSON fields on
 | `avoid_checksum` | string | — | | counter-example: a corpus map to move away from |
 | `avoid_beatmap_id` | int | — | | the same, named by id |
 | `avoid_strength` | float | 0.3 | 0–0.75 | how hard to move away from it |
+| `steer` | object / string | — | ±1.0 per axis | "like this one, but denser" |
 | `weights` | object | all 1.0 | 0–2 each | per-group weighting |
 
 Weights are named on the JSON path (`"weights": {"aim": 1.5}`) and prefixed on
@@ -400,6 +412,66 @@ A counter-example that is not in the corpus is a **404**, unlike a missing seed
 in `/similar/multi`. There is only one of them, so ignoring it would silently
 drop the only constraint the caller bothered to express.
 
+### The direction
+
+`steer` is "like this one, **but denser**". You name an axis and a signed
+amount, and only maps that actually clear that much of a gap stay in the pool;
+they are then ranked by ordinary distance to the target.
+
+Two ways to write it, same meaning:
+
+```bash
+# query string — one parameter, any number of axes
+curl -s "https://api.example.com/api/v1/similar?checksum=9af49…&steer=object_density:+0.3,sp_p50:-0.5"
+```
+
+```jsonc
+// JSON body
+{ "checksum": "9af49…", "steer": { "object_density": 0.3, "sp_p50": -0.5 } }
+```
+
+Axis names come from `steer_axes` in `/meta`. The sign follows that entry:
+positive is `more`, negative is `less`. An unknown axis is a **400**.
+
+The amount is a **margin in robust units** — the units the vectors themselves
+live in, so the same number means a comparable move on every axis. `+0.3` on
+`object_density` is "at least 0.3 units denser", about +1.4 obj/s on the real
+index. Useful values sit between 0.1 and 0.5; the cap is 1.0.
+
+Three designs were measured on the full 160 905-map index, three targets from
+3.97★ to 6.91★, six axes, both directions.
+
+- **Translating the query** — move the probe by `δ` on the axis and rank by
+  distance to that point — is *inert*. Up to δ = 2 the top ten are exactly the
+  results of the plain search: gaining on one axis costs more on the 95
+  correlated ones, so nothing reorders until the probe is off the manifold.
+- **A sign filter** (`x > target`) never leaves the manifold but has no dial:
+  it returned +5 % density, which nobody would call denser.
+- **A margin filter** (`x ≥ target + δ`), kept. It has a dial, and ranking by
+  distance to the target prefers the smallest overshoot, so the gap you get
+  lands *on* the margin you asked for instead of overshooting it.
+
+On a 5.57★ query, 10 901 candidates, best plain neighbour at distance 2.005:
+
+| `steer` on `object_density` | candidates left | gap obtained | distance to target |
+|---|---|---|---|
+| +0.1 | 47.2 % | +0.59 obj/s | 2.294 |
+| +0.2 | 20.5 % | +1.09 obj/s | 2.615 |
+| +0.3 | 7.9 % | +1.54 obj/s | 2.850 |
+| +0.5 | 1.8 % | +2.54 obj/s | 4.174 |
+| +1.0 | 0.3 % | +5.10 obj/s | 7.340 |
+
+That last row is why 1.0 is the cap: its results carry clipped coordinates,
+which is the corpus's outliers rather than maps anyone plays.
+
+Pushing hard on a narrow axis can leave nobody standing — the target may already
+sit at the edge of the scale, or the corpus may simply have nothing that far
+out. The answer is then **200 with an empty `matches`**, like `group_filter`.
+Returning the least-bad maps and calling them denser would be a lie.
+
+As with the counter-example, `distance` and `similarity` are always measured
+against the target. Steering removes candidates; it never bends the distance.
+
 ---
 
 ## Response shape
@@ -424,6 +496,7 @@ Every search endpoint answers with the same object.
   "diverge": null,
   "group_filter": null,
   "avoid": null,            // or {checksum, beatmap_id, label, strength}
+  "steer": null,            // or {"object_density": 0.3}, as applied
   "count": 10,
   "matches": [ /* … */ ],
   "source": "corpus",       // corpus | features | vector | file
@@ -470,6 +543,10 @@ that renders both the same way tells the reader something false.
 was asked for: a caller who named it by `beatmap_id` can check which map that
 actually resolved to.
 
+`steer` echoes the direction the same way — parsed, and with the axes left at
+zero dropped. A page that restores its controls from a response therefore reads
+back what actually happened, not what was typed.
+
 `status` is `dump` for anything that came out of the official ppy dump. That
 covers both ranked and loved maps — the dump does not separate them, so the
 field does not pretend to. Any other value is a map pulled in by playcount from
@@ -507,7 +584,7 @@ FastAPI's usual `{"detail": "..."}`.
 
 | Code | Meaning | What to do |
 |---|---|---|
-| 400 | malformed target: vector of the wrong length, missing feature, missing `stars`, unknown diverge or group filter, no seed, too many seeds | fix the request; the message names the problem |
+| 400 | malformed target: vector of the wrong length, missing feature, missing `stars`, unknown diverge or group filter, unknown or over-range `steer` axis, no seed, too many seeds | fix the request; the message names the problem |
 | 401 | token missing or wrong | send `Authorization: Bearer …` |
 | 404 | checksum unknown in this corpus; no seed resolved; counter-example unknown | post the `.osu` to `/similar/file`, or drop the unknown map |
 | 409 | `feature_version` mismatch | update the client, or point it at a matching server |
