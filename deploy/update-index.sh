@@ -24,6 +24,19 @@
 #   ./deploy/update-index.sh nomod DT         # seulement celles-la
 #   DRY_RUN=1 ./deploy/update-index.sh        # dit ce qu'il ferait
 #
+# Deux variables d'environnement, posees par le rafraichissement hebdomadaire
+# (scripts/refresh_ranked.py du projet de recherche) :
+#
+#   EXTRA_CORPUS_SUFFIX=_delta
+#       ajoute `data/corpus/<variante>_delta` a la liste des corpus, quand il
+#       existe. C'est la ou atterrissent les maps classees depuis le dump.
+#   MANIFEST_OVERRIDE=/data/refresh/annotations.json
+#       remplace le manifeste du pool par une version fusionnee, qui porte en
+#       plus les statuts suivis (`qualified`, et les maps repassees ranked).
+#
+# Les deux sont facultatives : sans elles le script se comporte exactement
+# comme avant, ce qui compte parce qu'il reste lancable a la main.
+#
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -51,6 +64,21 @@ echo
 
 # --- verifications avant de toucher a quoi que ce soit ------------------------
 
+EXTRA_CORPUS_SUFFIX="${EXTRA_CORPUS_SUFFIX:-}"
+MANIFEST_OVERRIDE="${MANIFEST_OVERRIDE:-}"
+
+# Le corpus supplementaire est optionnel et sa liste est calculee ici, une
+# fois : la construire deux fois (verification puis appel) est exactement le
+# genre d'ecart qui fait batir un index sans le dossier qu'on venait de
+# verifier.
+corpus_de() {
+    local v="$1"
+    printf '%s' "/data/corpus/$v /data/corpus/${v}_unranked"
+    if [ -n "$EXTRA_CORPUS_SUFFIX" ] && [ -d "$DATA/corpus/${v}${EXTRA_CORPUS_SUFFIX}" ]; then
+        printf ' %s' "/data/corpus/${v}${EXTRA_CORPUS_SUFFIX}"
+    fi
+}
+
 manquant=0
 for v in $VARIANTES; do
     for d in "$DATA/corpus/$v" "$DATA/corpus/${v}_unranked"; do
@@ -59,8 +87,26 @@ for v in $VARIANTES; do
             manquant=1
         fi
     done
+    if [ -n "$EXTRA_CORPUS_SUFFIX" ]; then
+        extra="$DATA/corpus/${v}${EXTRA_CORPUS_SUFFIX}"
+        if [ -d "$extra" ]; then
+            echo "corpus additionnel : $extra ($(ls "$extra"/*.parquet 2>/dev/null | wc -l) chunks)"
+        else
+            echo "corpus additionnel absent, ignore : $extra"
+        fi
+    fi
 done
-for f in "$DATA/unranked/manifest.json" "$DATA/loved.json"; do
+MANIFESTE="$DATA/unranked/manifest.json"
+MANIFESTE_CONTENEUR="/data/unranked/manifest.json"
+if [ -n "$MANIFEST_OVERRIDE" ]; then
+    # le chemin est donne vu du conteneur ; on le ramene cote hote pour la
+    # verification d'existence, sinon on validerait un fichier qu'on ne lit pas
+    MANIFESTE="$DATA${MANIFEST_OVERRIDE#/data}"
+    MANIFESTE_CONTENEUR="$MANIFEST_OVERRIDE"
+    echo "manifeste remplace : $MANIFESTE"
+fi
+
+for f in "$MANIFESTE" "$DATA/loved.json"; do
     if [ ! -f "$f" ]; then
         echo "annotation absente : $f"
         echo "  sans elle, les maps non classees ressortiraient etiquetees 'dump'."
@@ -71,7 +117,7 @@ done
 
 echo "manifeste : $(python3 -c "
 import json,sys
-p=json.load(open('$DATA/unranked/manifest.json'))
+p=json.load(open('$MANIFESTE'))
 print(f\"{p.get('n_total', len(p.get('beatmaps', {})))} maps, du {p.get('fetched_at','?')}\")
 print('           criteres :', p.get('criteria') or 'non enregistres')
 ")"
@@ -93,10 +139,11 @@ $COMPOSE --profile setup build builder
 for v in $VARIANTES; do
     echo
     echo "# index $v"
+    # shellcheck disable=SC2046,SC2086
     $COMPOSE --profile setup run --rm builder \
         python scripts/build_index.py \
-            --corpus "/data/corpus/$v" "/data/corpus/${v}_unranked" \
-            --manifest /data/unranked/manifest.json \
+            --corpus $(corpus_de "$v") \
+            --manifest "$MANIFESTE_CONTENEUR" \
             --loved /data/loved.json \
             --out "/data/index_new/$v"
 done
