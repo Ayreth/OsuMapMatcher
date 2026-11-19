@@ -9,8 +9,14 @@ unranked ones — updating live, on your second screen, with no account.
 
 > ### 🡒 Just want it in your game?
 >
-> Go to **[OsuMapMatcher-overlay](https://github.com/Ayreth/OsuMapMatcher-overlay)**.
-> One folder to drop into tosu, nothing to install, running in a minute.
+> **New: the official PC app.** Download
+> **[OsuMapMatcher-desktop](https://github.com/Ayreth/OsuMapMatcher-desktop/releases/latest)**,
+> run `MapMatcher.exe`, done. A native Windows window that follows the map you
+> select in **osu!stable, osu!lazer and Torii**, with **no tosu needed**, and
+> tells you itself when an update is out.
+>
+> Already using tosu? The **[tosu overlay](https://github.com/Ayreth/OsuMapMatcher-overlay)**
+> still works: one folder to drop into tosu.
 >
 > **This repository is the whole project**: the engine, the beatmap index, the
 > API you can host yourself, and `start.bat` to run all of it on your own
@@ -210,6 +216,22 @@ start.bat --api ""                             # never touch the network
 ```
 
 `OSUMAPMATCHER_API_URL` and `OSUMAPMATCHER_MODE` do the same thing through the environment.
+
+## The PC app
+
+**[OsuMapMatcher-desktop](https://github.com/Ayreth/OsuMapMatcher-desktop)** is the
+official Windows app: one `MapMatcher.exe`, nothing to install, nothing else to run.
+
+- **osu!stable**: the selected map and its mods are read from the game, read-only.
+- **osu!lazer and Torii**: followed through their log and a copy of their beatmap
+  database (their files are never written to). Mods are not followed there.
+- **tosu**, if it happens to run, is used instead.
+
+It talks to the same API as the overlay (or to your own `start.bat` server when it
+runs), has the same weights, steer and filters, and shows a strip when a new
+version is released.
+
+[![osu!MapMatcher desktop](https://raw.githubusercontent.com/Ayreth/OsuMapMatcher-desktop/main/docs/banner.png)](https://github.com/Ayreth/OsuMapMatcher-desktop)
 
 ## The tosu overlay
 
